@@ -4,7 +4,7 @@ import logging
 from g4f import models
 from g4f.Provider import __all__ as all_providers
 
-logger = logging.getLogger("g4f-mod.models_info")
+logger = logging.getLogger("g4f-sdk.models_info")
 
 # STEP 1: STATIC ENRICHMENT DATABASE
 # This is our "knowledge layer". We store information here that g4f doesn't provide directly.
