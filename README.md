@@ -94,6 +94,30 @@ response, context = await client.chat.generate(msg="What is the capital of Franc
 print(response)
 ```
 
+**Resilient Streaming Completions**
+For real-time output, use `client.chat.stream_generate`. This dedicated asynchronous generator method is fully **fault-tolerant**: if a provider fails mid-stream, the SDK will automatically retry the generation on a new provider, seamlessly attempting to continue the text from where it broke off.
+
+```python
+import asyncio
+from g4f_sdk.ai import G4F
+
+async def stream_example():
+    client = G4F(max_retries=5)
+
+    print("Streaming response (Resilient mode):")
+
+    # The async generator handles retries internally if the connection drops
+    async for chunk in client.chat.stream_generate(
+        msg="Write a short, detailed story about an AI who discovered music."
+    ):
+        print(chunk, end="", flush=True)
+
+    print("\n--- Stream finished ---")
+
+if __name__ == "__main__":
+    asyncio.run(stream_example())
+ 
+
 **Using Vision (Image Input):**
 ```python
 from g4f.models import gpt_4o
