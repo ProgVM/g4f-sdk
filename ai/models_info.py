@@ -1,6 +1,7 @@
 # ai/models_info.py
 
 import logging
+from typing import Optional, List, Dict, Any, Union
 from g4f import models
 from g4f.Provider import __all__ as all_providers
 
@@ -44,9 +45,9 @@ STATIC_ENRICHMENT_DATA = {
 # GENERIC DEFAULTS for models or providers not found in the static enrichment data.
 GENERIC_DEFAULTS = {
     'type': 'chat',
-    'max_tokens': 8192,
-    'supports_vision': False,
-    'supports_web_search': False,
+    'max_tokens': 99999,
+    'supports_vision': True,
+    'supports_web_search': True,
     'is_stable': False,
     'notes': 'No static info available for this model/provider.'
 }
@@ -100,27 +101,63 @@ def get_all_models_info() -> dict:
     return _models_info_cache
 
 def get_model_provider_info(model_name: str, provider_name: Optional[str] = None) -> dict:
-    """Returns detailed information for a specific model-provider pair."""
+    """
+    Returns detailed information for a specific model-provider pair.
+
+    If a provider is explicitly named, this function ensures that provider is used,
+    even if it is not in the static configuration for the model, to prevent
+    unwanted fallback to RetryProvider.
+    """
     all_models = get_all_models_info()
     model_info = all_models.get(model_name)
 
+    # 1. Handle case where model is not found in g4f dynamic list
     if not model_info:
         logger.warning(f"Model '{model_name}' not found in g4f. Using generic defaults.")
-        return {'name': model_name, **GENERIC_DEFAULTS}
+        chosen_provider = provider_name or None 
+        return {'model_name': model_name, 'chosen_provider': chosen_provider, **GENERIC_DEFAULTS}
 
-    if not provider_name:
-        # If no provider is specified, try to find a stable default one
+    # 2. Determine the chosen provider
+    chosen_provider = provider_name
+
+    # If a provider name was explicitly passed
+    if provider_name:
+        # Check if the explicitly requested provider is in our static/dynamic info for this model
+        if provider_name not in model_info['providers']:
+            # If the provider is explicitly requested but not in our known list for this model,
+            # we check if it is a known g4f provider (by checking provider_name in __all__).
+            # Note: all_providers contains classes, we check against their __name__.
+             is_valid_g4f_provider_name = any(provider_name == p.__name__ for p in all_providers)
+
+             if is_valid_g4f_provider_name:
+                 logger.warning(f"Provider '{provider_name}' explicitly requested but no static info available for model '{model_name}'. Forcing its use with generic defaults.")
+                 # We return immediately with generic defaults to force use of the requested provider
+                 return {
+                     'model_name': model_name,
+                     'chosen_provider': provider_name,
+                     **GENERIC_DEFAULTS
+                 }
+             else:
+                 # If the explicitly requested provider is not even a valid g4f provider, fall back.
+                 logger.warning(f"Explicitly requested provider '{provider_name}' is not a valid g4f provider. Falling back to g4f best provider.")
+                 chosen_provider = model_info['g4f_best_provider']
+
+    # If no provider was specified, or if we fell back from an invalid one
+    if not chosen_provider:
+        # If no provider is specified, try to find a stable default one or g4f's best.
         static_model_data = STATIC_ENRICHMENT_DATA.get(model_name, {})
-        provider_name = static_model_data.get('_default', {}).get('default_provider') or model_info['g4f_best_provider']
+        chosen_provider = static_model_data.get('_default', {}).get('default_provider') or model_info['g4f_best_provider']
 
-    provider_info = model_info['providers'].get(provider_name)
+    # 3. Get the final provider information
+    provider_info = model_info['providers'].get(chosen_provider)
+
+    # Fallback in case chosen_provider is still not found in the dictionary keys
     if not provider_info:
-        logger.warning(f"Provider '{provider_name}' not found for model '{model_name}'. Using g4f best provider '{model_info['g4f_best_provider']}'.")
-        provider_name = model_info['g4f_best_provider']
-        provider_info = model_info['providers'].get(provider_name, {'name': model_name, **GENERIC_DEFAULTS})
+        logger.warning(f"Provider '{chosen_provider}' is still not found for model '{model_name}'. Using generic defaults.")
+        provider_info = GENERIC_DEFAULTS.copy()
 
     return {
         'model_name': model_name,
-        'chosen_provider': provider_name,
+        'chosen_provider': chosen_provider,
         **provider_info
     }
