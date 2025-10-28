@@ -186,7 +186,8 @@ print(current_history)
 │ └── default_config.py # Fallback default settings
 ├── .gitignore # Files to ignore
 ├── README.md # You are here!
-├── requirements.txt # Project dependencies
+├── pyproject.toml # Project dependencies
+├── requirements.txt # Project dependencies v2
 └── setup.py # Used to build and publish to PyPI
 ```
 
