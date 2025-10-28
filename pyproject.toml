@@ -16,7 +16,7 @@ requires-python = ">=3.9"
 keywords = ["ai", "g4f", "gpt4free", "sdk", "api"]
 license = "MIT"
 classifiers = [
-    "Programming Language :: Python :: 3",,
+    "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
