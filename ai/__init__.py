@@ -16,12 +16,13 @@ class G4F:
     The main client for the G4F-SDK. Provides resilient access to 
     chat completions, image generation, and audio processing.
     """
-    def __init__(self, config_input: Optional[Union[str, dict, object]] = None):
+    def __init__(self, config_input: Optional[Union[str, dict, object]] = None, **kwargs):
         """
         Initializes the G4F-SDK client.
         :param config_input: Can be a dictionary, a path to a .json/.py file, or an object.
+        :param **kwargs: Any configuration keys (e.g., timeout=60, max_retries=3)
         """
-        self.config = Config(config_input)
+        self.config = Config(config_input, **kwargs) 
         self.chat = ChatHandler(self.config)
         self.images = ImageHandler(self.config)
         self.audio = AudioHandler(self.config)

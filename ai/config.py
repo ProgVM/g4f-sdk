@@ -14,11 +14,15 @@ logger = logging.getLogger("g4f-sdk.config")
 # --- Smart Configuration Class ---
 class Config:
     """Handles loading and accessing configuration from various sources."""
-    def __init__(self, config_input: Optional[Union[str, dict, object]] = None):
+    def __init__(self, config_input: Optional[Union[str, dict, object]] = None, **kwargs):
         self.data = self._load_defaults()
         user_config = self._load_from_input(config_input)
+
         if user_config:
             self.data.update(user_config)
+
+        if kwargs:
+            self.data.update(kwargs)
 
     def _load_defaults(self) -> dict:
         return {
