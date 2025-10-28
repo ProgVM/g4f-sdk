@@ -1,6 +1,7 @@
 # G4F-SDK: The Resilient G4F Client
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![PyPI Version](https://img.shields.io/pypi/v/g4f-sdk)
 ![Python Version](https://img.shields.io/badge/python-3.9+-blue.svg)
 
 **G4F-SDK** is the missing fault-tolerant SDK for the powerful `g4f` (GPT4Free) library. While `g4f` provides access to a wide range of free AI models, its providers can often be unstable, have undocumented rate limits, and varying context length restrictions.
@@ -18,31 +19,23 @@ This module acts as an intelligent wrapper, turning `g4f` into a reliable tool f
 
 ## 🔧 Installation
 
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/your-username/G4F-SDK.git
-    cd G4F-SDK
-    ```
+The G4F-SDK is available on PyPI.
 
-2. Create a `requirements.txt` file with the necessary dependencies (or use the one provided):
-    ```txt
-    # requirements.txt
-    g4f
-    tiktoken
-    ```
-
-3. Install the dependencies:
+1. Install the package using pip:
     ```bash
-    pip install -r requirements.txt
+    pip install g4f-sdk
     ```
+    *(Note: This command automatically installs the core dependencies: `g4f` and `tiktoken`.)*
+
+2. *(Optional)* Create a `config.json` file in your project root to customize settings.
 
 ## 🚀 Quick Start
 
-Here's how easy it is to get a reliable response from a chat model.
+Initialize the client and run a resilient chat completion.
 
 ```python
 import asyncio
-# The main client is simply named 'G4F'
+# Import the main client class G4F from the installed package
 from ai import G4F
 
 client = G4F()
@@ -139,7 +132,7 @@ Use the `client.audio` object for Text-to-Speech and Speech-to-Text.
 
 **Text-to-Speech (TTS):**
 ```python
-audio_bytes = await client.audio.text_to_speech(
+audio_bytes = await client.audio. text_to_speech(
     text="Hello world! This is a test of the text-to-speech system."
 )
 if audio_bytes:
@@ -155,20 +148,46 @@ if transcribed_text:
     print(f"Transcribed text: '{transcribed_text}'")
 ```
 
+### Managing Chat Context
+
+You can create multiple independent chat sessions and manage their history.
+
+```python
+# Create two separate conversations
+chat_1 = client.new_chat()
+chat_2 = client.new_chat()
+
+await chat_1.generate(msg="My name is Bob.")
+await chat_2.generate(msg="My name is Alice.")
+
+# Ask chat 1 about its context
+response, _ = await chat_1.generate(msg="What is my name?")
+print(f"Chat 1 response: {response}")
+
+# Ask chat 2 about its context
+response, _ = await chat_2.generate(msg="What is my name?")
+print(f"Chat 2 response: {response}")
+
+# You can also manually get or set the context
+current_history = chat_1.get_context()
+print(current_history)
+```
+
 ## 📂 Project Structure
 
 ```
 .
 ├── ai/
-│ ├── __init__.py  # Main G4F Facade Class
-│ ├── config.py  # Config Class and Base Handler
-│ ├── chat.py  # ChatHandler (Text and Vision Logic)
-│ ├── media.py  # ImageHandler and AudioHandler
+│ ├── __init__.py # Main G4F Facade Class (imported as 'from ai import G4F')
+│ ├── config.py # Config Class and Base Handler
+│ ├── chat.py # ChatHandler (Text and Vision Logic)
+│ ├── media.py # ImageHandler and AudioHandler
 │ ├── models_info.py # Hybrid Model Database System
 │ └── default_config.py # Fallback default settings
-├── .gitignore  # Files to ignore
-├── README.md  # You are here!
-└── requirements.txt # Project dependencies
+├── .gitignore # Files to ignore
+├── README.md # You are here!
+├── requirements.txt # Project dependencies
+└── setup.py # Used to build and publish to PyPI
 ```
 
 ## ⚙️ Configuration
@@ -187,4 +206,4 @@ Create a `config.json` file in your project's root to customize behavior:
 
 ## 🤝 Contributing & License
 
-Contributions are welcome! This project is licensed under the **MIT License**, making it fully open-source and permissible for all types of use.
+Contributions are welcome! This project is licensed under the **MIT License**.
