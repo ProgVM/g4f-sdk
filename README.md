@@ -15,7 +15,7 @@ This module acts as an intelligent wrapper, turning `g4f` into a reliable tool f
 * **✂️ Smart History Trimming**: Automatically truncates chat history to fit within the model's context window, prioritizing system prompts and recent messages.
 * **🔮 Hybrid Model Database**: Combines dynamic discovery of `g4f` models with a rich static database to provide crucial metadata (token limits, vision/web support) even for new providers.
 * **🛡️ Feature Awareness**: Prevents errors by checking if a chosen provider supports features like Vision or Web Search before sending the request.
-* **📦 Modular & Unified API**: Provides a clean, top-level client (`G4F`) for all functionalities.
+* **📦 Modular & Unified API**: Provides a clean, top-level client (`G4F`) for all functionalities with flexible configuration options.
 
 ## 🔧 Installation
 
@@ -38,12 +38,13 @@ import asyncio
 # Import the main client class G4F from the installed package
 from ai import G4F
 
-client = G4F()
+# Configuration can be passed directly via kwargs
+client = G4F(timeout=60, max_retries=3)
 
 async def main():
     print("--- Starting a simple chat ---")
 
-    # The generate method is resilient to failures
+ # The generate method is resilient to failures
     response_content, updated_context = await client.chat.generate(
         msg="Hello! Can you tell me a fun fact about programming?"
     )
@@ -62,7 +63,7 @@ if __name__ == "__main__":
 
 ### Initializing the Client
 
-The main client class is `G4F`.
+The main client class is `G4F`. Configuration can be passed in three ways (in order of priority: kwargs > config_input > config.json).
 
 **1. Default (searches for `config.json`):**
 ```python
@@ -70,7 +71,14 @@ from ai import G4F
 client = G4F()
 ```
 
-**2. With a dictionary:**
+**2. With direct Keyword Arguments (kwargs):**
+(Recommended for quick settings override)
+```python
+client = G4F(timeout=60, max_retries=3)
+```
+
+**3. With a dictionary (config_input):**
+(Useful for dynamic configuration)
 ```python
 custom_config = {"timeout": 60, "max_retries": 3}
 client = G4F(config_input=custom_config)
@@ -132,7 +140,7 @@ Use the `client.audio` object for Text-to-Speech and Speech-to-Text.
 
 **Text-to-Speech (TTS):**
 ```python
-audio_bytes = await client.audio. text_to_speech(
+audio_bytes = await client.audio.text_to_speech(
     text="Hello world! This is a test of the text-to-speech system."
 )
 if audio_bytes:
@@ -186,14 +194,14 @@ print(current_history)
 │ └── default_config.py # Fallback default settings
 ├── .gitignore # Files to ignore
 ├── README.md # You are here!
-├── pyproject.toml # Project dependencies
-├── requirements.txt # Project dependencies v2
-└── setup.py # Used to build and publish to PyPI
+├── requirements.txt # Project dependencies
+├── setup.py # Legacy build file
+└── pyproject.toml # Modern build configuration (PEP 518/621)
 ```
 
 ## ⚙️ Configuration
 
-Create a `config.json` file in your project's root to customize behavior:
+You can override settings via `kwargs` at initialization or create a `config.json` file in your project's root:
 
 **Example `config.json`:**
 ```json

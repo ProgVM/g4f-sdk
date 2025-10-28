@@ -10,7 +10,7 @@ REQUIRED_PACKAGES = [
 
 setuptools.setup(
   name="g4f-sdk",
-  version="0.1.0",
+  version="0.1.1",
   author="ProgVM",
   author_email="progvminc@example.com",
   description="The missing resilient and intelligent SDK for the g4f (GPT4Free) library.",
