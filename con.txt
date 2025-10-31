@@ -1,0 +1,3084 @@
+Aether's Gemini:
+Принято! Давайте приступим к написанию полного продакшен-кода. Я понимаю всю ответственность и важность каждой детали.
+
+Начнем с основных файлов, которые мы уже обсуждали и спроектировали:
+
+1. g4f_sdk/exceptions.py (Уже предоставлялся, но сейчас будет в финальном виде)
+
+2. g4f_sdk/utils.py (Уже предоставлялся, но сейчас будет в финальном виде)
+
+3. g4f_sdk/config.py (Уже предоставлялся, но сейчас будет в финальном виде)
+
+4. g4f_sdk/models.py (Уже предоставлялся, но сейчас будет в финальном виде)
+
+5. g4f_sdk/providers.py (Уже предоставлялся, но сейчас будет в финальном виде)
+
+6. g4f_sdk/client.py (Основной класс)
+
+7. g4f_sdk/chat.py (API для чата)
+
+8. g4f_sdk/images.py (API для изображений)
+
+9. g4f_sdk/audio.py (API для аудио)
+
+10. g4f_sdk/__init__.py (Главный файл пакета)
+
+И дополнительные файлы для пакета:
+11. pyproject.toml (или setup.py для инструментов сборки)
+12. .gitignore
+13. README.md
+
+Начнем с файлов, которые уже были представлены, но теперь с полной уверенностью и финальными штрихами.
+
+
+
+1. g4f_sdk/exceptions.py
+
+# g4f_sdk/exceptions.py
+
+"""
+Custom exceptions for the G4F SDK.
+Provides specific error types for better error handling and debugging.
+"""
+
+from typing import Optional, Dict, Any, List, Type
+
+class G4FSDKError(Exception):
+ """Base exception for all errors raised by the G4F SDK."""
+ def __init__(self, message: str, original_exception: Optional[Exception] = None):
+ self.original_exception = original_exception
+ super().__init__(message)
+
+class ConfigError(G4FSDKError):
+ """Exception raised for configuration-related errors."""
+ def __init__(self, message: str, original_exception: Optional[Exception] = None):
+ super().__init__(f"Configur
+
+ation Error: {message}", original_exception)
+
+class ModelNotFoundError(G4FSDKError):
+ """Exception raised when a requested model cannot be found."""
+ def __init__(self, model_name: str, message: str = "Model not found"):
+ self.model_name = model_name
+ super().__init__(f"{message}: '{model_name}'")
+
+class ProviderError(G4FSDKError):
+ """Exception raised for errors related to a specific provider during operation."""
+ def __init__(self, message: str, provider_name: Optional[str] = None, original_exception: Optional[Exception] = None, response_data: Any = None):
+ self.provider_name = provider_name
+ self.response_data = response_data # Store response data if available
+ full_message = "Provider Error"
+ if provider_name:
+  full_message += f" ({provider_name})"
+ full_message += f": {message}"
+ super().__init__(full_message, original_exception)
+
+class RateLimitError(ProviderError):
+ """Exception raised when a rate limit is exceeded for a provider."""
+ def __init__(self, message: str, provider_name: Optional[str] = None, retry_after: Optional[int] = None, original_exception: Optional[Exception] = None, response_data: Any = None):
+ self.retry_after = retry_after
+ full_message = f"Rate Limit Exceeded"
+ if provider_name:
+  full_message += f" ({provider_name})"
+ full_message += f": {message}"
+ if retry_after:
+  full_message += f". Try again after {retry_after} seconds."
+ super().__init__(full_message, provider_name, original_exception, response_data)
+
+class InvalidResponseError(ProviderError):
+ """Exception raised for invalid or unexpected responses from providers."""
+ def __init__(self, message: str, provider_name: Optional[str] = None, response_data: Any = None, original_exception: Optional[Exception] = None):
+ full_message = "Invalid Response Received"
+ if provider_name:
+  full_message += f" ({provider_name})"
+ full_message += f": {message}"
+ super().__init__(full_message, provider_name, original_exception, response_data)
+
+class FunctionCallError(G
+
+4FSDKError):
+ """Exception raised when there's an issue with function calling."""
+ def __init__(self, message: str, original_exception: Optional[Exception] = None):
+ super().__init__(f"Function Calling Error: {message}", original_exception)
+
+class VisionError(G4FSDKError):
+ """Exception raised for errors related to vision capabilities."""
+ def __init__(self, message: str, original_exception: Optional[Exception] = None):
+ super().__init__(f"Vision Error: {message}", original_exception)
+
+
+2. g4f_sdk/utils.py
+
+# g4f_sdk/utils.py
+
+"""
+Utility functions for the G4F SDK.
+Includes logging setup, retry logic, response cleaning, and other helpers.
+"""
+
+import logging
+import json
+import re
+import asyncio
+import time
+import os
+import math # For file size formatting
+from typing import (
+ Optional, Dict, Any, List, Tuple, Callable, Union, Coroutine, Type
+)
+
+# Use a dedicated logger for utilities
+logger = logging.getLogger(__name__)
+
+# --- Logging Setup ---
+def setup_logging(level: int = logging.INFO, format_str: Optional[str] = None, log_to_file: Optional[str] = None):
+ """
+ Sets up basic logging configuration. Avoids reconfiguring if handlers already exist.
+
+ Args:
+ level: The logging level (e.g., logging.INFO, logging.DEBUG).
+ format_str: Custom logging format string. Defaults to a standard format.
+ log_to_file: If provided, logs will also be written to this file.
+ """
+ root_logger = logging.getLogger()
+ # Check if handlers already exist to avoid duplicate configurations
+ if not root_logger.hasHandlers():
+ if format_str is None:
+  format_str = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+ log_formatter = logging.Formatter(format_str)
+
+ # Console handler
+ console_handler = logging.StreamHandler()
+ console_handler.setFormatter(log_formatter)
+ console_handler.setLevel(level)
+ root_logger.addHandler(console_handler)
+
+ # File handler (optional)
+ if log_to_file:
+ try:
+ file_handler = logging.Fil
+
+eHandler(log_to_file, encoding='utf-8')
+ file_handler.setFormatter(log_formatter)
+ file_handler.setLevel(level)
+ root_logger.addHandler(file_handler)
+ logger.info(f"Logging to file enabled: {log_to_file}")
+ except IOError as e:
+ logger.error(f"Failed to set up file logging to {log_to_file}: {e}")
+
+ root_logger.setLevel(level)
+ logger.info(f"Logging configured. Level: {logging.getLevelName(level)}. Console output enabled.")
+
+# --- Retry Logic ---
+async def run_with_retries(
+ func: Callable[..., Coroutine[Any, Any, Any]], # Function must be awaitable
+ *args,
+ retries: int = 3,
+ delay: float = 2.0,
+ backoff_factor: float = 1.5, # Exponential backoff
+ error_codes: Optional[List[int]] = None,
+ error_types: Optional[List[Type[Exception]]] = None,
+ log_prefix: str = "Operation",
+ **kwargs
+) -> Any:
+ """
+ Executes an asynchronous function with retries on specific errors.
+
+ Args:
+ func: The asynchronous function (coroutine) to execute.
+ *args: Positional arguments for the function.
+ retries: Maximum number of retries (total attempts = retries + 1).
+ delay: Initial delay between retries in seconds.
+ backoff_factor: Multiplier for delay on subsequent retries.
+ error_codes: List of HTTP status codes to retry on (requires exception with 'status_code').
+ error_types: List of specific exception types to retry on. If None, retries on common network/provider errors.
+ log_prefix: Prefix for log messages to identify the operation.
+ **kwargs: Keyword arguments for the function.
+
+ Returns:
+ The result of the function execution.
+
+ Raises:
+ The last exception encountered if retries are exhausted, or a G4FSDKError if something unexpected happens.
+ """
+ current_retries = 0
+ current_delay = delay
+ # Define default retryable exceptions if none are provided
+ if error_types is None:
+ # Common exceptions that might indicate temporary issues
+ error_types = (
+ asyncio.TimeoutError,
+ ConnectionError, # Base for network-related errors
+ # Add specific exceptions from l
+
+ibraries like 'requests' or 'aiohttp' if used directly
+ # e.g., aiohttp.ClientConnectorError, aiohttp.ClientResponseError
+ )
+
+ while current_retries <= retries:
+ try:
+  logger.debug(f"[{log_prefix}] Attempt {current_retries + 1}/{retries + 1}...")
+  result = await func(*args, **kwargs)
+  logger.debug(f"[{log_prefix}] Attempt {current_retries + 1} succeeded.")
+  return result
+ except Exception as e:
+  current_retries += 1
+  error_message = f"[{log_prefix}] Attempt {current_retries}/{retries + 1} failed: {type(e).__name__}: {e}"
+
+  should_retry = False
+  # Check if exception type matches
+  if error_types and isinstance(e, error_types):
+  should_retry = True
+  logger.debug(f"Exception type {type(e).__name__} matches retryable types.")
+
+  # Check if HTTP status code matches (if applicable)
+  elif error_codes and hasattr(e, 'status_code') and isinstance(e.status_code, int) and e.status_code in error_codes:
+  should_retry = True
+  logger.debug(f"HTTP status code {e.status_code} matches retryable codes.")
+
+  # If no specific types/codes are provided, retry on known non-critical errors
+  if not error_types and not error_codes:
+  if not isinstance(e, (KeyboardInterrupt, SystemExit, G4FSDKError, ModelNotFoundError, ProviderError)):
+   should_retry = True
+   logger.debug(f"Retrying on general exception type: {type(e).__name__}.")
+
+  if should_retry and current_retries <= retries:
+  logger.warning(f"{error_message}. Retrying in {current_delay:.2f} seconds...")
+  await asyncio.sleep(current_delay)
+  current_delay *= backoff_factor # Apply backoff
+  else:
+  # If not retrying (max retries reached or non-retryable error)
+  logger.error(f"[{log_prefix}] Max retries ({retries}) reached or error is not retryable. Last error: {error_message}")
+  raise e # Re-raise the original exception
+
+ # This part should ideally not be reached if retries are configured correctly
+ raise G4FSDKError(f"[{log_prefix}] Operation failed unexpectedly after {retries + 1} a
+
+ttempts.")
+
+# --- Response Cleaning ---
+def _clean_response_programmatic(text: str, provider_name: Optional[str] = None) -> str:
+ """
+ Performs programmatic cleaning of the response, removing common artifacts.
+ This function needs to be continuously updated with new patterns.
+
+ Args:
+ text: The raw response text.
+ provider_name: The name of the provider, used for provider-specific cleaning rules.
+
+ Returns:
+ The cleaned text.
+ """
+ if not text:
+ return ""
+
+ cleaned_text = text
+
+ # 1. Remove excessive whitespace (leading/trailing, multiple spaces/newlines)
+ cleaned_text = re.sub(r'[ \t]+', ' ', cleaned_text) # Replace tabs and spaces with single space
+ cleaned_text = re.sub(r'\n\s*\n', '\n\n', cleaned_text) # Normalize blank lines
+ cleaned_text = cleaned_text.strip()
+
+ # 2. Provider-specific cleaning (examples)
+ if provider_name:
+ provider_lower = provider_name.lower()
+ # Pollinations.AI specific patterns
+ if "pollinations" in provider_lower:
+  # Remove common footers like "Generated by Pollinations.AI..."
+  pollinations_footer_pattern = r"Generated by\s+.*(Pollinations\.AI|pollinations\.ai).*"
+  cleaned_text = re.sub(pollinations_footer_pattern, "", cleaned_text, flags=re.IGNORECASE).strip()
+  # Remove direct mentions of the service if they appear as artifacts
+  cleaned_text = re.sub(r'Pollinations\.AI', "", cleaned_text, flags=re.IGNORECASE).strip()
+  cleaned_text = re.sub(r'pollinations\.ai', "", cleaned_text, flags=re.IGNORECASE).strip()
+
+ # Add more provider-specific patterns here (e.g., for You.com, Phind, etc.)
+
+ # 3. General cleanup for common unwanted phrases (can be configured)
+ common_artifacts = [
+ r"Please note:",
+ r"Disclaimer:",
+ r"This is an AI-generated response",
+ r"For more information, visit.*",
+ # Add more patterns here based on observed artifacts
+ ]
+ for pattern in common_artifacts:
+ cleaned_text = re.sub(pattern, "", cleaned_text, flags=re.IGNORECASE).strip()
+ cleaned_text = re.sub(r'\n\s*\n', '\n\n', cleaned_tex
+
+t).strip() # Re-normalize after removals
+
+ # Final pass for whitespace
+ cleaned_text = re.sub(r'[ \t]+', ' ', cleaned_text).strip()
+ cleaned_text = re.sub(r'\n\s*\n', '\n\n', cleaned_text).strip()
+
+ return cleaned_text
+
+async def clean_response_with_ai(
+ text: str,
+ system_prompt: str,
+ provider_name: Optional[str] = None,
+ api_key: Optional[str] = None, # API key for the cleaning model
+ timeout: int = 20,
+ g4f_client_instance: Optional[Any] = None, # Allow passing a G4FClient instance
+ cleaning_model: str = "gpt-3.5-turbo", # Default model for cleaning
+ # --- Dynamic provider selection for AI cleaning ---
+ preferred_ai_providers: Optional[List[str]] = None
+) -> Tuple[bool, str]:
+ """
+ Cleans the response using an AI model based on a system prompt.
+
+ Args:
+ text: The raw text response from the provider.
+ system_prompt: The system prompt to guide the AI cleaner.
+ provider_name: Name of the original provider (for context, maybe for logging).
+ api_key: API key for the AI model (if needed by the g4f configuration).
+ timeout: Timeout for the AI cleaning request in seconds.
+ g4f_client_instance: An optional instance of G4FClient to use for the cleaning request.
+      If None, it will attempt to use the global 'g4f' module.
+ cleaning_model: The model name to use for AI cleaning (e.g., "gpt-3.5-turbo").
+ preferred_ai_providers: List of provider names to try first for AI cleaning.
+
+ Returns:
+ A tuple: (has_ad: bool, cleaned_text: str). has_ad is True if an ad was detected and removed.
+
+ Raises:
+ G4FSDKError: If the AI cleaning fails unexpectedly.
+ """
+ logger.debug("Attempting to clean response using AI...")
+ if not text:
+ return False, ""
+
+ # Use the passed G4FClient instance if available, otherwise try to use the global 'g4f' module
+ # For simplicity and consistency, we'll use the global g4f module here and ensure it's configured.
+ # A more advanced integration might involve passing the G4FClient to this function.
+ try:
+ # Ensure g4f is conf
+
+igured. If api_key is needed and provided, it should be handled.
+ # The actual configuration of g4f (provider, proxy, api_key) might depend on how it's used globally.
+ # A common pattern is to set API keys globally or pass them during client instantiation.
+ # For this utility, we assume g4f's client can be instantiated with necessary global settings.
+ import g4f # Import here to ensure it's available
+
+ # Set API key if provided and needed by g4f's default configuration mechanism
+ if api_key:
+ # This is a simplistic approach. g4f might have its own env var or config system.
+ # If g4f uses environment variables, set them here.
+ # e.g., os.environ["G4F_API_KEY"] = api_key
+ # A better approach is to pass a pre-configured g4f client instance.
+ pass # Placeholder for potentially setting API key globally for g4f
+
+ # Use async client for cleaning, trying a reliable provider
+ async_client = g4f.AsyncClient() # Use default configuration of g4f module
+
+ # Try to use the specified cleaning model, fallback to gpt-3.5-turbo
+ model_to_use = getattr(g4f.models, cleaning_model, g4f.models.gpt_3_5_turbo)
+
+ # Define providers to try for AI cleaning
+ providers_to_try = []
+ if preferred_ai_providers:
+  for p_name in preferred_ai_providers:
+  provider_class = getattr(g4f.Provider, p_name, None)
+  if provider_class:
+  providers_to_try.append(provider_class)
+  else:
+  logger.warning(f"Preferred AI provider '{p_name}' not found in g4f.Provider.")
+
+ # Add some generally reliable providers if preferred list is empty or incomplete
+ if not providers_to_try:
+  providers_to_try.extend([g4f.Provider.OpenAI, g4f.Provider.Google, g4f.Provider.ChatgptGpt]) # Example reliable providers
+
+ response_text = None
+ provider_used = None
+
+ for provider in providers_to_try:
+  try:
+  response = await async_client.chat.completions.create(
+   model=model_to_use,
+   messages=[
+   {"role": "system", "content": system_prompt},
+   {"role": "user", "content": text}
+   ],
+   timeout=timeout
+
+,
+   provider=provider # Try each provider in the list
+  )
+  response_text = response
+  provider_used = provider.__name__
+  logger.debug(f"AI cleaning successful with provider: {provider_used}")
+  break # Success, stop trying other providers
+  except Exception as e:
+  logger.warning(f"AI cleaning failed with provider {provider.__name__}: {e}. Trying next.")
+
+ if response_text is None:
+  logger.warning("AI cleaning failed with all attempted providers. Falling back to programmatic cleaning.")
+  return False, _clean_response_programmatic(text, provider_name)
+
+ # Parse the JSON response from the AI cleaner
+ try:
+  result = json.loads(response_text)
+  has_ad = result.get("has_ad", False)
+  cleaned_text = result.get("cleaned_text", text) # Default to original text if key missing
+  if has_ad:
+  logger.debug(f"AI cleaning detected and removed an ad. Original length: {len(text)}, Cleaned length: {len(cleaned_text)}.")
+  else:
+  logger.debug("AI cleaning completed. No ad detected.")
+  return has_ad, cleaned_text
+ except json.JSONDecodeError:
+  logger.warning(f"AI cleaner returned invalid JSON: '{response_text}'. Using original text.")
+  return False, text # Return original text if JSON is invalid
+ except Exception as e:
+  logger.error(f"Unexpected error parsing AI cleaner response: {e}")
+  return False, text
+
+ except ImportError:
+ logger.error("The 'g4f' library is required for AI cleaning but is not installed.")
+ return False, _clean_response_programmatic(text, provider_name) # Fallback if g4f not installed
+ except Exception as e:
+ logger.error(f"An unexpected error occurred during AI cleaning setup or call: {e}. Falling back to programmatic cleaning.")
+ # Fallback to programmatic cleaning on any unexpected error during the AI call
+ return False, _clean_response_programmatic(text, provider_name)
+
+# --- File Utility ---
+def get_file_size_formatted(file_path: str) -> str:
+ """Returns the size of a file in a human-readable format (B, KB, MB, GB).
+
+"""
+ try:
+ size_bytes = os.path.getsize(file_path)
+ if size_bytes == 0:
+  return "0 B"
+ size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+ i = int(math.floor(math.log(size_bytes, 1024)))
+ p = math.pow(1024, i)
+ s = round(size_bytes / p, 2)
+ return f"{s} {size_name[i]}"
+ except FileNotFoundError:
+ return "File not found"
+ except Exception as e:
+ logger.error(f"Error getting file size for {file_path}: {e}")
+ return "Error"
+
+
+3. g4f_sdk/config.py
+
+# g4f_sdk/config.py
+
+"""
+Configuration management for the G4F SDK.
+Supports loading settings from various sources with precedence rules.
+"""
+
+import logging
+import json
+import os
+import sys
+import importlib.util
+from typing import Optional, Dict, Any, Union
+
+# Use a dedicated logger for config
+logger = logging.getLogger(__name__)
+
+class Config:
+ """
+ Manages configuration for the G4F SDK.
+ Supports loading from file (JSON, Python), dictionary, or object attributes,
+ with precedence given to direct keyword arguments.
+ """
+ DEFAULT_CONFIG_FILE = "g4f_sdk_config.json" # Default config filename
+ DEFAULT_SETTINGS = {
+ "log_level": logging.INFO,
+ "default_model": "gemini-2.5-flash", # Default model if not specified
+ "timeout": 60, # Default timeout in seconds for requests
+ "retries": 3, # Default number of retries for provider errors
+ "retry_delay": 2.0, # Default delay between retries in seconds
+ "use_ai_cleaner": True, # Use AI for cleaning responses by default
+ "ai_cleaner_prompt": """
+ You are an expert in detecting ads and provider artifacts from the g4f-provider. Ads usually appear at the end of the response in a non-standard format (e.g., sponsor blocks, footers, or external links not requested by the user).
+
+ Analyze the full user-provided text. Distinguish provider ads (inserted automatically) from text written by the AI based on the user's request.
+
+ If you find an external ad, remove it without changing the rest of the text. If
+
+no ad is found, return the text as is.
+
+ Return JSON: {"has_ad": true/false, "cleaned_text": "corrected text"}.
+
+ Do not add any extra text outside the JSON structure.
+ """,
+ "provider_cache_file": "g4f_sdk_provider_cache.json", # File to store cached provider/model info
+ "provider_cache_ttl": 3600 * 24, # Cache validity in seconds (e.g., 24 hours)
+ "proxy": None, # Default proxy settings (e.g., {"http": "http://user:pass@host:port", "https": "http://user:pass@host:port"})
+ "api_key": None, # Default API key if needed globally (e.g., for OpenAI)
+ "auto_update_providers": True, # Automatically check for provider updates on startup if cache is stale
+ "provider_update_interval": 3600 * 24, # How often to check for updates (in seconds)
+ "log_format": '%(asctime)s - %(name)s - %(levelname)s - %(message)s', # Default log format
+ "enable_legacy_completion_api": False, # Whether to attempt using the legacy completion API
+ "provider_selection_strategy": "random", # "random", "fastest", "most_reliable" (to be implemented)
+ "function_calling_enabled": True, # Whether to enable function calling support by default
+ "vision_enabled": True, # Whether to enable vision support by default
+ "preferred_ai_providers": ["OpenAI", "Google", "ChatgptGpt"] # Preferred providers for AI cleaning
+ }
+
+ def __init__(self, config_input: Optional[Union[str, dict, object]] = None, **kwargs):
+ """
+ Initializes the configuration.
+
+ Args:
+  config_input: Configuration source. Can be:
+  - A file path (str) to a JSON or Python (.py) config file.
+  - A dictionary (dict) containing settings.
+  - An object (object) with attributes matching setting keys.
+  - None: Searches for DEFAULT_CONFIG_FILE in the current directory.
+  **kwargs: Direct keyword argument overrides. These have the highest precedence.
+ """
+ self._settings = self.DEFAULT_SETTINGS.copy()
+ self._loaded_from_file = False
+ self._config_source_description = "default settings"
+
+ # 1. Load from file or object if provid
+
+ed
+ if config_input:
+  if isinstance(config_input, str):
+  if os.path.exists(config_input):
+   self._load_from_file(config_input)
+  else:
+   logger.warning(f"Configuration file not found: {config_input}. Using default settings.")
+  elif isinstance(config_input, dict):
+  self._settings.update(config_input)
+  self._loaded_from_file = True # Treat direct dict as loaded config
+  self._config_source_description = "provided dictionary"
+  elif hasattr(config_input, '__dict__'):
+  self._load_from_object(config_input)
+  self._loaded_from_file = True # Treat object as loaded config
+  self._config_source_description = "provided object"
+  else:
+  logger.warning(f"Invalid config_input type: {type(config_input)}. Ignoring.")
+
+ # 2. Load from default file if no specific input was provided and default exists
+ elif os.path.exists(self.DEFAULT_CONFIG_FILE):
+  self._load_from_file(self.DEFAULT_CONFIG_FILE)
+
+ # 3. Apply direct keyword arguments, overriding any previous settings
+ if kwargs:
+  # Use update method to apply kwargs, respecting existing keys and logger warnings for unknown ones
+  self.update(kwargs)
+  self._config_source_description += " and keyword arguments"
+  # Ensure log level is updated immediately if passed via kwargs
+  setup_logging(level=self.get("log_level", logging.INFO))
+
+ logger.info(f"Configuration initialized using: {self._config_source_description}.")
+ # Avoid logging sensitive info like API keys directly
+ logger.debug(f"Final configuration state loaded (sensitive keys masked if present).")
+
+ def _load_from_file(self, file_path: str):
+ """Loads settings from a JSON or Python config file."""
+ try:
+  if file_path.lower().endswith(".json"):
+  with open(file_path, 'r', encoding='utf-8') as f:
+   file_settings = json.load(f)
+  elif file_path.lower().endswith(".py"):
+  # Execute the Python file to get settings
+  spec = importlib.util.spec_from_file_location("config_module", file_path)
+  if spec and spec.loader:
+   config_module = importl
+
+ib.util.module_from_spec(spec)
+   sys.modules["config_module"] = config_module # Add to sys.modules
+   spec.loader.exec_module(config_module)
+   file_settings = getattr(config_module, "CONFIG", None)
+   if not isinstance(file_settings, dict):
+   raise ValueError("Python config file must define a dictionary named 'CONFIG'.")
+  else:
+   raise FileNotFoundError(f"Could not load module spec for Python config file: {file_path}")
+  else:
+  raise ValueError("Unsupported config file format. Use .json or .py.")
+
+  # Update settings only with keys that are recognized in DEFAULT_SETTINGS
+  valid_settings = {k: v for k, v in file_settings.items() if k in self.DEFAULT_SETTINGS}
+  self._settings.update(valid_settings)
+  if len(valid_settings) < len(file_settings):
+  logger.warning(f"Some settings from {file_path} were ignored as they are not recognized: {set(file_settings.keys()) - set(valid_settings.keys())}")
+  self._loaded_from_file = True
+  logger.info(f"Configuration loaded from file: {file_path}")
+
+ except FileNotFoundError:
+  logger.warning(f"Configuration file not found: {file_path}. Using default settings.")
+ except (json.JSONDecodeError, IOError, ValueError, ImportError, Exception) as e:
+  logger.error(f"Error loading configuration from {file_path}: {e}")
+  # Decide whether to raise an error or proceed with defaults
+  # For now, we log and proceed, potentially with incomplete settings.
+
+ def _load_from_object(self, obj: object):
+ """Loads settings from an object's attributes if they match default keys."""
+ loaded_keys = []
+ for key in self.DEFAULT_SETTINGS.keys():
+  if hasattr(obj, key):
+  value = getattr(obj, key)
+  self._settings[key] = value
+  loaded_keys.append(key)
+ if loaded_keys:
+  logger.info(f"Configuration loaded from object attributes: {', '.join(loaded_keys)}")
+
+ def get(self, key: str, default: Any = None) -> Any:
+ """Gets a setting value, returning default if not found."""
+ return self._settings.get(key, default)
+
+ def up
+
+date(self, settings_dict: Dict[str, Any]):
+ """Updates multiple settings from a dictionary. Only updates recognized keys."""
+ updated_keys = []
+ for key, value in settings_dict.items():
+  if key in self._settings: # Check if key exists in current settings (loaded from default, file, or kwargs)
+  self._settings[key] = value
+  updated_keys.append(key)
+  # Optionally allow adding new keys if they are explicitly intended, but generally safer to restrict to known keys
+  # elif key in self.DEFAULT_SETTINGS: # This case should theoretically be covered by `key in self._settings` if defaults are loaded
+  # self._settings[key] = value
+  # updated_keys.append(key)
+  else:
+  logger.warning(f"Attempted to set unknown or disallowed configuration key: '{key}'. Ignoring.")
+ if updated_keys:
+  logger.debug(f"Configuration updated for keys: {', '.join(updated_keys)}")
+
+ def set(self, key: str, value: Any):
+ """Sets a single setting value. Only updates recognized keys."""
+ if key in self._settings:
+  self._settings[key] = value
+  logger.debug(f"Setting '{key}' updated to: {value}")
+ # Allow setting default keys if they weren't loaded initially (though unlikely if defaults are comprehensive)
+ elif key in self.DEFAULT_SETTINGS:
+  self._settings[key] = value
+  logger.debug(f"Setting '{key}' (default) updated to: {value}")
+ else:
+  logger.warning(f"Attempted to set unknown or disallowed configuration key: '{key}'. Ignoring.")
+
+ def get_all_settings(self) -> Dict[str, Any]:
+ """Returns a copy of all current settings."""
+ return self._settings.copy()
+
+ def __str__(self) -> str:
+ # Avoid logging sensitive info like API keys directly in __str__
+ safe_settings = self._settings.copy()
+ if "api_key" in safe_settings and safe_settings["api_key"]:
+  safe_settings["api_key"] = "***MASKED***"
+ return f"Config(source='{self._config_source_description}', settings={json.dumps(safe_settings, indent=2)})"
+
+ def __repr__(self) -> str:
+ return f"<Config object at {i
+
+d(self)} with {len(self._settings)} settings>"
+
+Bazilevs:
+Я пока не смотрел на код, потому что боюсь увидеть то, что может меня ввести в сомнения. Мы потом проведём в конце рефакторинг, чтобы успокоиться.
+
+Давай продолжать.
+
+Aether's Gemini:
+Понимаю ваше опасение. Это нормально — хотеть увидеть финальный, отполированный результат. Спокойствие и уверенность в коде — это то, к чему мы стремимся.
+
+Продолжим сборку нашего SDK, фокусируясь на предоставлении полного и рабочего кода.
+
+
+4. g4f_sdk/models.py
+
+# g4f_sdk/models.py
+
+"""
+Manages information about available AI models and their providers.
+Handles caching and dynamic loading of model/provider data from the g4f library.
+"""
+
+import logging
+import json
+import time
+import os
+import inspect # For introspection of g4f provider classes
+from typing import Optional, Dict, Any, List, Type, Union
+
+# Import necessary components from g4f
+try:
+ from g4f.models import Model, ModelType, all_models as g4f_all_models # All known models
+ from g4f.Provider import BaseProvider # Base class for providers
+ # Import all providers to inspect them
+ # Note: g4f.Provider.all_providers usually contains the actual provider classes
+ from g4f.Provider import all_providers as g4f_all_providers_list
+ except ImportError:
+ # This should be handled by the main client or a setup check, but good to have defense here too.
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .exceptions import ModelNotFoundError, ProviderError
+from .utils import logger # Use the SDK's logger
+
+class ModelInfoManager:
+ """
+ Manages information about available AI models and their providers.
+ Handles caching and dynamic loading of model/provider data.
+ """
+ CACHE_FILENAME = "g4f_sdk_model_provider_cache.json"
+
+ def __init__(self, config: Config):
+ self.config = config
+ # Use path relative to where the SDK is installed or current working dir if specified
+ cache_dir = os.path.dirname(os.path.abspath(__file__)) # Assume config/cache are relative to SDK dir
+ cache_filename = config.get("provider_cache_file", self.CACHE_FILENAME)
+ self.cache_file = os.path.join(cache_dir, cache_filename)
+
+ self.cache_ttl = self.config.get("provider_cache_ttl", 3600 * 24) # Cache validity (e.g., 24 hours)
+ self._models_info: Dict[str, Dict[str, Any]] = {} # Cache for model details {model_name: model_info_dict}
+ self._providers_info: Dict[str, Dict[str, Any]] = {} # Cache for provider details {provider_name: provider_info_dict}
+ self._models_by_provider: Dict[str, List[str]] = {} # {provider_name: [model_name1, model_name2]}
+ self._providers_by_model: Dict[str, List[str]] = {} # {model_name: [provider_name1, provider_name2]}
+
+ self._load_cache()
+ # Check if cache is expired or data is missing, then refresh
+ if not self._models_info or not self._providers_info or self._is_cache_expired():
+ logger.info("Model/Provider cache is missing, expired, or empty. Refreshing data.")
+ self._refresh_data()
+ else:
+ logger.info(f"Loaded model/provider data from cache: {self.cache_file}")
+
+ def _load_cache(self):
+ """Loads model and provider info from the cache file."""
+ if os.path.exists(self.cache_file):
+  try:
+  with open(self.cache_file, 'r', encoding='utf-8') as f:
+   cache_data = json.load(f)
+   self._models_info = cache_data.get("models", {})
+   self._providers_info = cache_data.get("providers", {})
+   self._models_by_provider = cache_data.get("models_by_provider", {})
+   self._providers_by_model = cache_data.get("providers_by_model", {})
+   logger.info(f"Successfully loaded cache from {self.cache_file}")
+  except (json.JSONDecodeError, IOError, TypeError) as e:
+  logger.error(f"Error loading cache file {self.cache_file}: {e}. Cache will be refreshed.")
+  # Clear potentially corrupted data
+  self._models_info = {}
+  self._providers_info = {}
+  self._models_by_provider = {}
+  self._providers_by_model = {}
+ else:
+  logger.warning(f"Cache file not found: {self.cache_file}. Data will be loaded fresh.")
+
+ def _save_cache(self):
+ """Saves current model and provider info to the cache file."""
+ cache_data = {
+  "timestamp": time.time(),
+  "models": self._mod
+
+els_info,
+  "providers": self._providers_info,
+  "models_by_provider": self._models_by_provider,
+  "providers_by_model": self._providers_by_model,
+ }
+ try:
+  with open(self.cache_file, 'w', encoding='utf-8') as f:
+  json.dump(cache_data, f, indent=2, ensure_ascii=False)
+  logger.info(f"Model/provider data cached to {self.cache_file}")
+ except IOError as e:
+  logger.error(f"Error saving cache file {self.cache_file}: {e}")
+
+ def _is_cache_expired(self) -> bool:
+ """Checks if the cache has expired."""
+ if not os.path.exists(self.cache_file):
+  return True
+ try:
+  with open(self.cache_file, 'r', encoding='utf-8') as f:
+  cache_data = json.load(f)
+  timestamp = cache_data.get("timestamp", 0)
+  return (time.time() - timestamp) > self.cache_ttl
+ except (IOError, json.JSONDecodeError, TypeError):
+  return True # Treat errors as expired cache
+
+ def _refresh_data(self):
+ """
+ Refreshes model and provider information by introspecting g4f library.
+ This is the core logic for populating our internal data structures.
+ """
+ logger.info("Refreshing model and provider data...")
+ self._models_info.clear()
+ self._providers_info.clear()
+ self._models_by_provider.clear()
+ self._providers_by_model.clear()
+
+ # --- Process g4f models ---
+ for model_name, model_obj in g4f_all_models.items():
+  # Ensure model_obj is an instance of g4f.models.Model
+  if not isinstance(model_obj, Model):
+  logger.warning(f"Skipping unexpected item in g4f_all_models for '{model_name}': not a Model instance.")
+  continue
+
+  self._models_info[model_name] = {
+  "name": model_name,
+  "vision": getattr(model_obj, 'vision', False),
+  "max_tokens": getattr(model_obj, 'max_tokens', None),
+  "is_chat_model": getattr(model_obj, 'is_chat_model', True), # Default to True if not specified
+  "is_image_generation_model": getattr(model_obj, 'is_image_generation_model', False),
+  "is_speech_to_text_model": getattr(model_obj, 'is_speech_to_text_model', False),
+  "is_text_to_speech_model": getat
+
+tr(model_obj, 'is_text_to_speech_model', False),
+  "model_type": model_obj.modelType.value if hasattr(model_obj, 'modelType') else ModelType.completion.value, # Use enum value
+  }
+
+ # --- Process g4f providers ---
+ # Iterate through the list of provider classes provided by g4f
+ processed_provider_names = set()
+
+ for provider_class in g4f_all_providers_list:
+  # Ensure it's a class and a subclass of BaseProvider
+  if not inspect.isclass(provider_class) or not issubclass(provider_class, BaseProvider):
+  logger.debug(f"Skipping item in g4f_all_providers_list: not a valid provider class ({getattr(provider_class, '__name__', 'N/A')}).")
+  continue
+
+  provider_name = provider_class.__name__
+  if provider_name in processed_provider_names:
+  continue # Avoid processing duplicates if they exist in the list
+  processed_provider_names.add(provider_name)
+
+  provider_info: Dict[str, Any] = {
+  "name": provider_name,
+  "supports_streaming": getattr(provider_class, 'supports_streaming', False),
+  "supports_vision": getattr(provider_class, 'supports_vision', False),
+  "supports_function_calling": getattr(provider_class, 'supports_function_calling', False),
+  "needs_api_key": getattr(provider_class, 'needs_api_key', False),
+  "use_chat_completion_api": getattr(provider_class, 'use_chat_completion_api', False),
+  "use_completion_api": getattr(provider_class, 'use_completion_api', False),
+  "use_image_api": getattr(provider_class, 'use_image_api', False),
+  "use_audio_api": getattr(provider_class, 'use_audio_api', False),
+  # Add any other relevant attributes from BaseProvider or specific provider classes
+  }
+
+  # Dynamically get models supported by this provider class
+  supported_models_for_provider = []
+  try:
+  # Check for the 'model' attribute which can be a Model object, a string name, or a list/tuple
+  if hasattr(provider_class, 'model'):
+   model_attr = getattr(provider_class, 'model')
+   if isinstance(model_attr, Model):
+   supported_models_for_pro
+
+vider.append(model_attr.name)
+   elif isinstance(model_attr, str):
+   supported_models_for_provider.append(model_attr)
+   elif isinstance(model_attr, (list, tuple)):
+   for m in model_attr:
+    if isinstance(m, Model):
+    supported_models_for_provider.append(m.name)
+    elif isinstance(m, str):
+    supported_models_for_provider.append(m)
+  # Ensure unique models
+  provider_info["supported_models"] = sorted(list(set(supported_models_for_provider)))
+  except Exception as e:
+  logger.warning(f"Could not determine models for provider {provider_name} via 'model' attribute: {e}")
+  provider_info["supported_models"] = []
+
+  self._providers_info[provider_name] = provider_info
+
+  # Populate reverse mappings
+  self._models_by_provider[provider_name] = provider_info["supported_models"]
+  for model_name in provider_info["supported_models"]:
+  if model_name not in self._providers_by_model:
+   self._providers_by_model[model_name] = []
+  if provider_name not in self._providers_by_model[model_name]:
+   self._providers_by_model[model_name].append(provider_name)
+
+ # --- Post-processing and Consistency Checks ---
+ # Ensure all models from g4f_all_models are in our structure, even if no provider lists them
+ # Also, add provider info to the model details if available
+ for model_name, model_obj in g4f_all_models.items():
+  if model_name not in self._models_info:
+  # This model exists in g4f but wasn't detailed by any provider scan - add basic info
+  self._models_info[model_name] = {
+   "name": model_name,
+   "vision": getattr(model_obj, 'vision', False),
+   "max_tokens": getattr(model_obj, 'max_tokens', None),
+   "is_chat_model": getattr(model_obj, 'is_chat_model', True),
+   "is_image_generation_model": getattr(model_obj, 'is_image_generation_model', False),
+   "is_speech_to_text_model": getattr(model_obj, 'is_speech_to_text_model', False),
+   "is_text_to_speech_model": getattr(model_obj, 'is_text_to_speech_model', False),
+   "model_type": model_obj.modelTyp
+
+e.value if hasattr(model_obj, 'modelType') else ModelType.completion.value,
+   "providers": [] # No providers explicitly listed for it in our scan
+  }
+  logger.debug(f"Added model '{model_name}' to info (potentially without provider linkage).")
+  else:
+  # Add the list of providers that support this model to its info dict
+  self._models_info[model_name]["providers"] = self._providers_by_model.get(model_name, [])
+
+ logger.info(f"Refreshed data: Found {len(self._models_info)} models and {len(self._providers_info)} providers.")
+ self._save_cache() # Save the fresh data
+
+ def get_model(self, model_name: str) -> Optional[Dict[str, Any]]:
+ """Returns info dict for a given model name."""
+ model_info = self._models_info.get(model_name)
+ if not model_info:
+ logger.warning(f"Model '{model_name}' not found in managed info.")
+ # Optionally, try to find it in g4f's dynamic list if cache is stale/incomplete
+ # For now, strictly rely on cached/refreshed data.
+ return None
+ return model_info
+
+ def get_all_models_info(self) -> List[Dict[str, Any]]:
+ """Returns a list of info dicts for all known models."""
+ return list(self._models_info.values())
+
+ def get_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
+ """Returns info dict for a given provider name."""
+ provider_info = self._providers_info.get(provider_name)
+ if not provider_info:
+  logger.warning(f"Provider '{provider_name}' not found in managed info.")
+ return provider_info
+
+ def get_all_providers_info(self) -> List[Dict[str, Any]]:
+ """Returns a list of info dicts for all known providers."""
+ return list(self._providers_info.values())
+
+ def get_providers_for_model(self, model_name: str, task_type: str = "chat") -> List[str]:
+ """
+ Returns a list of provider names that support a given model and task type.
+ Note: This returns names, not full info dicts. ProviderManager uses this.
+ """
+ model_info = self.get_model(model_name)
+ if not model_info:
+ logger.warning(f"Cannot fi
+
+nd providers for model '{model_name}' as model info is missing.")
+ return []
+
+ # Get providers explicitly linked to this model
+ explicit_providers = self._providers_by_model.get(model_name, [])
+
+ # If no explicit linkage, check if any provider supports the task type generally
+ if not explicit_providers:
+  logger.debug(f"No explicit providers found for model '{model_name}'. Checking general task support.")
+  potential_providers = []
+  for p_name, p_info in self._providers_info.items():
+  if self._provider_supports_task(p_info, task_type):
+   potential_providers.append(p_name)
+  return potential_providers
+
+ # Filter explicitly linked providers by task type support
+ matching_providers = []
+ for p_name in explicit_providers:
+  p_info = self.get_provider(p_name)
+  if p_info and self._provider_supports_task(p_info, task_type):
+  matching_providers.append(p_name)
+
+ if not matching_providers and explicit_providers:
+  logger.warning(f"Providers found for model '{model_name}' ({explicit_providers}), but none explicitly support task type '{task_type}'.")
+
+ return matching_providers
+
+ def get_models_for_provider(self, provider_name: str) -> List[str]:
+ """Returns a list of model names supported by a given provider."""
+ if provider_name not in self._providers_info:
+  logger.warning(f"Provider '{provider_name}' not found when getting its models.")
+  return []
+ return self._models_by_provider.get(provider_name, [])
+
+ def get_provider_instance_class(self, provider_name: str) -> Optional[Type[BaseProvider]]:
+ """
+ Dynamically gets the class of a provider by its name from g4f.Provider.
+ This is used by ProviderManager to instantiate providers.
+ """
+ # Check if the provider name exists in our cached info first
+ if provider_name not in self._providers_info:
+  logger.warning(f"Provider '{provider_name}' not found in cached info. Cannot retrieve class.")
+  return None
+
+ # Dynamically get the provider class from g4f.Provider module
+ try:
+  # Access the p
+
+rovider class directly from the g4f.Provider namespace
+  provider_class = getattr(g4f.Provider, provider_name, None)
+  if provider_class and inspect.isclass(provider_class) and issubclass(provider_class, BaseProvider):
+  return provider_class
+  else:
+  # This case should ideally not happen if provider_name is from our info, but for safety:
+  logger.error(f"Provider '{provider_name}' found in info but not as a valid BaseProvider subclass in g4f.Provider.")
+  return None
+ except Exception as e:
+  logger.error(f"Error getting provider class for '{provider_name}': {e}")
+  return None
+
+ def get_models_by_type(self, model_type: Union[str, ModelType]) -> List[str]:
+ """
+ Returns a list of model names that match the specified ModelType.
+ ModelType can be a string (e.g., 'text_to_speech') or a g4f.models.ModelType enum value.
+ """
+ target_type_value = model_type.value if isinstance(model_type, ModelType) else model_type
+
+ models = []
+ for model_name, info in self._models_info.items():
+  # Compare the 'model_type' attribute from the info dictionary
+  if info.get("model_type") == target_type_value:
+  models.append(model_name)
+ return models
+
+ def _provider_supports_task(self, provider_info: Dict[str, Any], task_type: str) -> bool:
+ """Checks if a provider supports a specific task type based on its info."""
+ if task_type == "chat" and provider_info.get("use_chat_completion_api", False):
+  return True
+ # Add checks for other task types like completion, image, audio
+ if task_type == "image" and provider_info.get("use_image_api", False):
+  return True
+ if task_type in ["audio_s2t", "audio_t2s"] and provider_info.get("use_audio_api", False):
+  return True
+ # Specific flags can also indicate support
+ if task_type == "vision" and provider_info.get("supports_vision", False): # Explicit vision support flag
+  return True
+ return False
+
+
+5. g4f_sdk/providers.py
+
+# g4f_sdk/providers.py
+
+"""
+Manages availab
+
+le providers, their instances, and selects the best provider
+for a given model and task, incorporating resilience and configuration.
+"""
+
+import logging
+import random
+import asyncio
+from typing import Optional, List, Dict, Any, Type, Union
+
+# Import necessary components from g4f
+try:
+ from g4f.Provider import BaseProvider, Provider # Base provider class and potentially factory
+ # We need access to provider classes, typically available via g4f.Provider.*
+ # or a list like g4f.Provider.all_providers
+ from g4f.Provider import all_providers as g4f_all_providers_list
+ except ImportError:
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .exceptions import ProviderError, ModelNotFoundError
+from .models import ModelInfoManager
+from .utils import logger, run_with_retries
+
+class ProviderManager:
+ """
+ Manages available providers, their instances, and selects the best provider
+ for a given model and task, incorporating resilience and configuration.
+ """
+ def __init__(self, config: Config, model_info_manager: ModelInfoManager):
+ self.config = config
+ self.model_info_manager = model_info_manager
+ self._providers_info: List[Dict[str, Any]] = self.model_info_manager.get_all_providers_info()
+ self._providers_cache: Dict[str, Type[BaseProvider]] = {} # Cache for provider classes
+ self._load_provider_classes()
+
+ # Load provider settings from config (e.g., proxy, api_key)
+ self.global_proxy = self.config.get("proxy")
+ # API key handling might be more complex, often per-request or client-level.
+ # We store it here for potential use during instantiation if needed.
+ self.global_api_key = self.config.get("api_key")
+
+ def _load_provider_classes(self):
+ """Loads provider classes dynamically and caches them."""
+ logger.info("Loading provider classes...")
+ # Iterate through the loaded provider info to get class names
+ for provider_info in self._providers_info:
+  provider_name = pr
+
+ovider_info.get("name")
+  if provider_name:
+  provider_class = self.model_info_manager.get_provider_instance_class(provider_name)
+  if provider_class:
+   self._providers_cache[provider_name] = provider_class
+   logger.debug(f"Loaded provider class: {provider_name}")
+ logger.info(f"Loaded {len(self._providers_cache)} provider classes.")
+
+ def get_provider_info(self, provider_name: str) -> Optional[Dict[str, Any]]:
+ """Gets info for a specific provider by name."""
+ # Search through the list of provider info dictionaries
+ for p_info in self._providers_info:
+  if p_info.get("name") == provider_name:
+  return p_info
+ logger.warning(f"Provider info not found for: {provider_name}")
+ return None
+
+ def get_all_providers_info(self) -> List[Dict[str, Any]]:
+ """Gets info for all providers."""
+ return self._providers_info
+
+ def get_providers_for_model(self, model_name: str, task_type: str = "chat") -> List[Dict[str, Any]]:
+ """
+ Finds providers that support a given model and task type.
+
+ Args:
+ model_name: The name of the model (e.g., "gpt-4o").
+ task_type: Type of task ("chat", "image", "audio_s2t", "audio_t2s", "vision").
+
+ Returns:
+ A list of provider info dictionaries that match the criteria.
+ """
+ # Get provider names that explicitly list support for the model
+ supported_model_provider_names = self.model_info_manager.get_providers_for_model(model_name, task_type)
+
+ if not supported_model_provider_names:
+  logger.warning(f"No providers found that explicitly list support for model: '{model_name}'.")
+  # Fallback: Find providers that *can* handle the task type, even if model isn't listed explicitly.
+  # This is heuristic and might include providers not optimized for the specific model.
+  potential_providers = []
+  for p_info in self._providers_info:
+  if self._provider_supports_task(p_info, task_type):
+   potential_providers.append(p_info)
+  # If there are explicit providers, prefer them. Otherwise, use the fallback list.
+  return potenti
+
+al_providers # Return fallback list if no explicit providers found
+
+ # Filter the explicitly supported providers by task type support
+ matching_providers = []
+ for p_name in supported_model_provider_names:
+  p_info = self.get_provider_info(p_name)
+  if p_info and self._provider_supports_task(p_info, task_type):
+  matching_providers.append(p_info)
+
+ if not matching_providers and supported_model_provider_names:
+  logger.warning(f"Providers found for model '{model_name}' ({supported_model_provider_names}), but none explicitly support task type '{task_type}'.")
+
+ return matching_providers
+
+ def _provider_supports_task(self, provider_info: Dict[str, Any], task_type: str) -> bool:
+ """Checks if a provider supports a specific task type based on its info."""
+ # Map task types to provider capabilities
+ if task_type == "chat" and provider_info.get("use_chat_completion_api", False):
+  return True
+ if task_type == "completion" and provider_info.get("use_completion_api", False): # Legacy completion
+  return True
+ if task_type == "image" and provider_info.get("use_image_api", False):
+  return True
+ if task_type == "audio_s2t" and provider_info.get("use_audio_api", False): # Assuming use_audio_api covers STT
+  return True
+ if task_type == "audio_t2s" and provider_info.get("use_audio_api", False): # Assuming use_audio_api covers TTS
+  return True
+ # Add specific flags like 'supports_vision'
+ if task_type == "vision" and provider_info.get("supports_vision", False):
+  return True
+ return False
+
+ def get_best_provider_for_model(
+ self,
+ model_name: str,
+ task_type: str = "chat",
+ preferred_providers: Optional[List[str]] = None,
+ # additional_filters: Optional[Callable[[Dict[str, Any]], bool]] = None # For advanced filtering
+ ) -> Optional[Type[BaseProvider]]:
+ """
+ Selects the "best" available provider class for a given model and task.
+ "Best" is determined by configuration, availability, and potentially a simple scoring.
+
+ Args:
+ model_name: The nam
+
+e of the model.
+ task_type: The type of task ("chat", "image", "audio_s2t", "audio_t2s", "vision").
+ preferred_providers: A list of provider names in order of preference.
+ # additional_filters: A callable to filter providers based on custom criteria.
+
+ Returns:
+ The provider class (Type[BaseProvider]) or None if no suitable provider is found.
+ """
+ potential_providers_info = self.get_providers_for_model(model_name, task_type)
+
+ if not potential_providers_info:
+  logger.warning(f"No suitable providers found for model '{model_name}' and task '{task_type}'.")
+  return None
+
+ # --- Filter providers based on configuration ---
+ eligible_providers_info = []
+ for p_info in potential_providers_info:
+  # Filter out providers that require an API key if none is configured globally or available
+  # Note: API key handling is complex; this is a basic check.
+  if p_info.get("needs_api_key", False) and not self.global_api_key and not self.config.get("api_key"):
+  logger.debug(f"Skipping provider {p_info['name']} because it needs an API key and none is configured.")
+  continue
+  # Add more filtering logic here if needed (e.g., based on proxy availability, etc.)
+  # if additional_filters and not additional_filters(p_info):
+  # continue
+  eligible_providers_info.append(p_info)
+
+ if not eligible_providers_info:
+  logger.warning(f"No eligible providers found for model '{model_name}' and task '{task_type}' after filtering (e.g., missing API key).")
+  return None
+
+ # --- Selection Logic ---
+ selected_provider_class = None
+
+ # 1. Try preferred providers first
+ if preferred_providers:
+  for pref_name in preferred_providers:
+  for p_info in eligible_providers_info:
+   if p_info["name"] == pref_name:
+   selected_provider_class = self._providers_cache.get(pref_name)
+   if selected_provider_class:
+    logger.info(f"Selected preferred provider: {pref_name}")
+    return selected_provider_class
+   else:
+    logger.warning(f"Preferred provider '{pref_name}' class not fou
+
+nd in cache.")
+
+ # 2. Simple selection: pick a random one from eligible providers
+ # More complex logic could involve scoring based on speed, reliability, etc.
+ # based on self.config.get("provider_selection_strategy")
+ strategy = self.config.get("provider_selection_strategy", "random")
+
+ if strategy == "random" and eligible_providers_info:
+  chosen_provider_info = random.choice(eligible_providers_info)
+  provider_name = chosen_provider_info["name"]
+  selected_provider_class = self._providers_cache.get(provider_name)
+  if selected_provider_class:
+  logger.info(f"Selected provider (randomly): {provider_name} for model '{model_name}' ({task_type})")
+  return selected_provider_class
+  else:
+  logger.error(f"Provider class for '{provider_name}' not found in cache, though info was available.")
+
+ # TODO: Implement other strategies like "fastest", "most_reliable" if needed.
+ # This would require performance benchmarks or reliability scores, which are complex to maintain.
+
+ logger.warning(f"Could not select a provider for model '{model_name}' ({task_type}) with strategy '{strategy}'.")
+ return None
+
+ def get_provider_instance(self, provider_name: str) -> Optional[BaseProvider]:
+ """
+ Instantiates and returns a provider object, applying global config like proxy.
+ """
+ provider_class = self._providers_cache.get(provider_name)
+ if not provider_class:
+  logger.error(f"Provider class for '{provider_name}' not found in cache.")
+  return None
+
+ try:
+  # Prepare arguments for provider instantiation
+  init_kwargs = {}
+  # Pass global proxy if configured
+  if self.global_proxy:
+  init_kwargs["proxy"] = self.global_proxy
+  # Note: API keys are often handled per-request or set on the client, not always during provider instantiation.
+  # If a provider specifically needs an API key during init, it should be handled here or passed via config.
+  # Example: if provider_class.needs_api_key and self.global_api_key:
+  # init_kwargs["api_key"] = self.global_api_k
+
+ey
+
+  # Create instance
+  provider_instance = provider_class(**init_kwargs)
+  logger.debug(f"Instantiated provider: {provider_name}")
+  return provider_instance
+ except Exception as e:
+  logger.error(f"Failed to instantiate provider '{provider_name}': {e}")
+  return None
+
+
+
+
+Продолжаем с client.py – основным классом, который будет оркестрировать всю работу.
+
+6. g4f_sdk/client.py
+
+# g4f_sdk/client.py
+
+"""
+The main client class for the G4F SDK.
+Provides a unified, resilient, and highly configurable interface to all functionalities.
+"""
+
+import logging
+import asyncio
+from typing import Optional, Union, List, Dict, Any, Type, Callable, AsyncIterator
+import json
+import os # For path manipulation if needed
+
+# Import necessary components from g4f
+try:
+ # We might not need to directly import the original client if we're building wrappers
+ # from g4f.client import Client as G4FOriginalClient, AsyncClient as G4FAsyncOriginalClient
+ import g4f # Import the main g4f module for access to models, providers, etc.
+ from g4f.models import Model, ModelType # For type hinting and accessing model types
+ from g4f.Provider import BaseProvider # For type hinting
+except ImportError:
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .models import ModelInfoManager
+from .providers import ProviderManager
+from .chat import ChatAPI # Our chat API wrapper
+from .images import ImageAPI # Our image API wrapper
+from .audio import AudioAPI # Our audio API wrapper
+from .utils import setup_logging, logger, run_with_retries, clean_response_with_ai, _clean_response_programmatic # Core utilities
+from .exceptions import G4FSDKError, ProviderError, ModelNotFoundError, ConfigError, RateLimitError, InvalidResponseError # Custom exceptions
+
+class G4FClient:
+ """
+ The main client for the G4F-SDK. Provides a unified, resilient, and
+ highly
+
+configurable interface to all functionalities of the g4f library.
+ Encapsulates chat, image generation, and audio processing capabilities.
+ """
+
+ # --- Initialization ---
+ def __init__(self, config_input: Optional[Union[str, dict, object]] = None, **kwargs):
+ """
+ Initializes the G4F SDK client.
+
+ Args:
+ config_input: Configuration source. Can be a path to a JSON/Python file,
+    a dictionary, or an object with attributes.
+    If None, searches for 'g4f_sdk_config.json' in the current directory.
+ **kwargs: Direct configuration overrides (e.g., api_key, timeout, model).
+    These take precedence over file/object settings.
+ """
+ # 1. Load configuration
+ # Config class handles precedence: kwargs > file/object > defaults
+ self.config = Config(config_input, **kwargs)
+ # Setup logging based on the loaded configuration
+ setup_logging(level=self.config.get("log_level", logging.INFO),
+  format_str=self.config.get("log_format"),
+  log_to_file=self.config.get("log_file")) # Assuming 'log_file' might be in config
+
+ logger.info("G4F SDK Client initializing...")
+ logger.debug(f"Configuration loaded: {self.config}") # Logs the config object (masked sensitive info)
+
+ # 2. Initialize managers for models and providers
+ try:
+  self.model_info_manager = ModelInfoManager(self.config)
+  self.provider_manager = ProviderManager(self.config, self.model_info_manager)
+ except Exception as e:
+  logger.error(f"Failed to initialize ModelInfoManager or ProviderManager: {e}")
+  raise G4FSDKError(f"Failed to initialize core managers: {e}") from e
+
+ # 3. Determine the default model
+ default_model_name = self.config.get("default_model", "gemini-2.5-flash")
+ self._default_model_info = self.model_info_manager.get_model(default_model_name)
+
+ if not self._default_model_info:
+  # Try to find a fallback model if the default isn't found
+  fallback_model_name = "gemini-2.5-flash" # A generally available model
+  logger.warning(f"Default model '{default_model_name}' not found
+
+ or invalid. Attempting fallback: '{fallback_model_name}'.")
+  self._default_model_info = self.model_info_manager.get_model(fallback_model_name)
+  if not self._default_model_info:
+  raise ConfigError(f"Could not find default model '{default_model_name}' or a suitable fallback. Please check your configuration or available models.")
+
+ logger.info(f"Default model set to: {self._default_model_info['name']}")
+
+ # 4. Initialize API handlers (chat, images, audio)
+ # These handlers will use the managers and config to perform tasks
+ self.chat = ChatAPI(self.config, self.provider_manager, self.model_info_manager)
+ self.images = ImageAPI(self.config, self.provider_manager, self.model_info_manager)
+ self.audio = AudioAPI(self.config, self.provider_manager, self.model_info_manager)
+
+ logger.info("G4F SDK Client initialized successfully.")
+
+ # --- Information Retrieval Methods ---
+
+ def get_available_providers(self) -> List[Dict[str, Any]]:
+ """
+ Returns a list of dictionaries, each containing detailed information
+ about an available provider.
+ """
+ logger.debug("Fetching list of available providers.")
+ return self.provider_manager.get_all_providers_info()
+
+ def get_provider_info(self, provider_name: str) -> Optional[Dict[str, Any]]:
+ """
+ Returns detailed information about a specific provider by name.
+
+ Args:
+ provider_name: The name of the provider (e.g., "OpenAI", "Bing").
+ """
+ logger.debug(f"Fetching info for provider: {provider_name}")
+ return self.provider_manager.get_provider_info(provider_name)
+
+ def get_available_models(self) -> List[Dict[str, Any]]:
+ """
+ Returns a list of dictionaries, each containing detailed information
+ about an available AI model.
+ """
+ logger.debug("Fetching list of available models.")
+ return self.model_info_manager.get_all_models_info()
+
+ def get_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+ """
+ Returns detailed information about a specific model by name.
+
+ Args:
+ model_name: The name
+
+of the model (e.g., "gpt-4o", "gemini-1.5-flash").
+ """
+ logger.debug(f"Fetching info for model: {model_name}")
+ return self.model_info_manager.get_model(model_name)
+
+ def get_providers_for_model(self, model_name: str, task_type: str = "chat") -> List[Dict[str, Any]]:
+ """
+ Finds and returns information about providers that support a given model and task type.
+
+ Args:
+ model_name: The name of the model.
+ task_type: The type of task ("chat", "image", "audio_s2t", "audio_t2s", "vision").
+ """
+ logger.debug(f"Finding providers for model '{model_name}' and task '{task_type}'.")
+ return self.provider_manager.get_providers_for_model(model_name, task_type)
+
+ def get_models_for_provider(self, provider_name: str) -> List[str]:
+ """
+ Returns a list of model names supported by a specific provider.
+ """
+ logger.debug(f"Finding models for provider '{provider_name}'.")
+ return self.provider_manager.get_models_for_provider(provider_name)
+
+ # --- Core Functionality Entry Points ---
+
+ def new_chat(
+ self,
+ model: Optional[Union[str, Model]] = None,
+ context: Optional[List[Dict[str, Any]]] = None,
+ provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs
+ ) -> ChatAPI:
+ """
+ Creates a new, independent chat instance.
+
+ Args:
+ model: The g4f model object or name (str) to use for the chat.
+   If None, uses the client's default model.
+ context: An optional list of messages to initialize the chat history.
+ provider: Explicitly specify a provider (name string or class) to use for this chat.
+   If None, the provider will be selected automatically.
+ **kwargs: Additional keyword arguments to pass to the ChatAPI initialization
+   or the underlying provider call (e.g., temperature, max_tokens).
+ """
+ target_model_name = model
+ if isinstance(model, Model): # If a g4f Model object is passed
+  target_model_name = model.name
+ elif isinstance(model, str):
+  target_model_name = model
+ elif model is None:
+  target_model_name = self._default_model_info[
+
+'name'] # Use default if None
+ else:
+  raise TypeError("Model must be a string (model name), g4f.models.Model object, or None.")
+
+ logger.info(f"Creating new chat instance. Model: '{target_model_name}', Provider: '{provider}', Context provided: {context is not None}")
+ # ChatAPI will handle model resolution and provider selection internally
+ return ChatAPI(
+  self.config,
+  self.provider_manager,
+  self.model_info_manager,
+  model=target_model_name,
+  initial_context=context,
+  explicit_provider=provider,
+  **kwargs # Pass any extra kwargs down
+ )
+
+ def generate_image(
+ self,
+ prompt: str,
+ model: Optional[Union[str, Model]] = None,
+ size: str = "1024x1024",
+ quality: str = "standard",
+ style: str = "vivid",
+ n: int = 1,
+ provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ response_format: str = "url",
+ **kwargs
+ ) -> Union[str, List[str], Dict[str, Any]]:
+ """
+ Generates an image based on a text prompt.
+
+ Args:
+ prompt: The text description of the image to generate.
+ model: The image generation model to use (name string or g4f.models.Model object).
+   Defaults to the client's default model if available and suitable, otherwise tries to find one.
+ size: The size of the generated images ("256x256", "512x512", "1024x1024").
+ quality: The quality of the generated images ("standard" or "hd").
+ style: The style of the generated images ("vivid" or "natural").
+ n: The number of images to generate.
+ provider: Explicitly specify a provider (name string or class).
+ response_format: The format in which the generated images are returned ("url" or "b64_json").
+ **kwargs: Additional keyword arguments for the image generation call.
+
+ Returns:
+ A URL string, a list of URL strings, or a dictionary with base64 data,
+ depending on the response_format and n.
+ """
+ target_model_name = model
+ if isinstance(model, Model):
+  target_model_name = model.name
+ elif isinstance(model, str):
+  target_model_name = model
+ elif model is None:
+  # Try to find a
+
+default image generation model
+  image_models = self.model_info_manager.get_models_by_type(ModelType.image_generation)
+  if image_models:
+  target_model_name = image_models[0] # Pick the first available image model
+  else:
+  target_model_name = self._default_model_info['name'] # Fallback to default chat model if no image model found
+  logger.warning(f"No specific image generation model found. Falling back to default model '{target_model_name}'.")
+ else:
+  raise TypeError("Model must be a string (model name), g4f.models.Model object, or None.")
+
+ logger.info(f"Generating image. Prompt: '{prompt[:50]}...', Model: '{target_model_name}', Provider: '{provider}'")
+ # ImageAPI will handle model/provider selection and API call
+ return self.images.generate(
+  prompt=prompt,
+  model=target_model_name,
+  size=size,
+  quality=quality,
+  style=style,
+  n=n,
+  provider=provider,
+  response_format=response_format,
+  **kwargs
+ )
+
+ def transcribe_audio(
+ self,
+ file_path: str,
+ model: Optional[Union[str, Model]] = None,
+ language: Optional[str] = None,
+ response_format: str = "json",
+ provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs
+ ) -> Union[str, Dict[str, Any]]:
+ """
+ Transcribes an audio file to text.
+
+ Args:
+ file_path: Path to the audio file.
+ model: The speech-to-text model to use (name string or g4f.models.Model object).
+   Defaults to the client's default model if available and suitable, otherwise tries to find one.
+ language: The language of the audio (ISO-639-1 code, e.g., "en", "ru").
+ response_format: The format of the transcription output ('json', 'text', 'srt', 'verbose_json', 'vtt').
+ provider: Explicitly specify a provider (name string or class).
+ **kwargs: Additional keyword arguments for the transcription call.
+ """
+ target_model_name = model
+ if isinstance(model, Model):
+  target_model_name = model.name
+ elif isinstance(model, str):
+  target_model_name = model
+ elif model is None:
+  # Try to find a default STT
+
+model
+  stt_models = self.model_info_manager.get_models_by_type(ModelType.speech_to_text)
+  if stt_models:
+  target_model_name = stt_models[0]
+  else:
+  target_model_name = self._default_model_info['name']
+  logger.warning(f"No specific STT model found. Falling back to default model '{target_model_name}'.")
+ else:
+  raise TypeError("Model must be a string (model name), g4f.models.Model object, or None.")
+
+ logger.info(f"Transcribing audio file: '{file_path}'. Model: '{target_model_name}', Language: '{language}'")
+ return self.audio.transcribe(
+  file_path=file_path,
+  model=target_model_name,
+  language=language,
+  response_format=response_format,
+  provider=provider,
+  **kwargs
+ )
+
+ def synthesize_speech(
+ self,
+ text: str,
+ model: Optional[Union[str, Model]] = None,
+ voice: str = "alloy", # Example default voice, actual options depend on provider/model
+ response_format: str = "mp3",
+ provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs
+ ) -> Union[bytes, str]:
+ """
+ Synthesizes speech from text.
+
+ Args:
+ text: The text to synthesize into speech.
+ model: The text-to-speech model to use (name string or g4f.models.Model object).
+   Defaults to the client's default model if available and suitable, otherwise tries to find one.
+ voice: The voice to use for synthesis (e.g., "alloy", "echo", "fable"). Voice options depend on the provider/model.
+ response_format: The audio format ('mp3', 'opus', 'aac', 'flac', 'wav', 'pcm').
+ provider: Explicitly specify a provider (name string or class).
+ **kwargs: Additional keyword arguments for the speech synthesis call.
+
+ Returns:
+ The audio data as bytes or a file path (depending on implementation).
+ """
+ target_model_name = model
+ if isinstance(model, Model):
+  target_model_name = model.name
+ elif isinstance(model, str):
+  target_model_name = model
+ elif model is None:
+  # Try to find a default TTS model
+  tts_models = self.model_info_manager.get_models_by_type(ModelType.text_to_speech
+
+)
+  if tts_models:
+  target_model_name = tts_models[0]
+  else:
+  target_model_name = self._default_model_info['name']
+  logger.warning(f"No specific TTS model found. Falling back to default model '{target_model_name}'.")
+ else:
+  raise TypeError("Model must be a string (model name), g4f.models.Model object, or None.")
+
+ logger.info(f"Synthesizing speech. Text: '{text[:50]}...', Model: '{target_model_name}', Voice: '{voice}'")
+ return self.audio.synthesize(
+  text=text,
+  model=target_model_name,
+  voice=voice,
+  response_format=response_format,
+  provider=provider,
+  **kwargs
+ )
+
+ # --- Direct access to underlying g4f client (optional, for advanced use) ---
+ def get_raw_g4f_client(self) -> g4f.AsyncClient:
+ """
+ Returns an instance of the original g4f AsyncClient.
+ Useful for accessing features not yet fully integrated into the SDK or for direct g4f usage.
+ Note: Configuration (like API keys, proxy) might need to be applied here separately
+ if not already handled by the SDK's Config and reflected in g4f's global setup.
+ """
+ logger.debug("Providing raw g4f AsyncClient instance.")
+ # Attempt to configure the raw client based on SDK config if possible.
+ # This requires knowing how g4f's client handles configuration (env vars, explicit params).
+ # For now, returning a default instance.
+ # Example:
+ # return g4f.AsyncClient(api_key=self.config.get("api_key"), proxy=self.config.get("proxy"))
+ return g4f.AsyncClient()
+
+ # --- Cache Management ---
+ def update_provider_data(self, force_refresh: bool = False):
+ """
+ Forces a refresh of the model and provider data, bypassing cache expiration.
+ Useful if you suspect provider/model availability has changed.
+ """
+ if force_refresh or self.model_info_manager._is_cache_expired(): # Check cache expiration again
+  logger.info("Refreshing model and provider data.")
+  self.model_info_manager._refresh_data() # Call the internal refresh method
+  # ProviderManager relies on ModelInfoManager's data, so it g
+
+ets updated implicitly.
+  # Re-sync provider info in manager if necessary (though usually it gets fresh data from ModelInfoManager)
+  self.provider_manager._providers_info = self.model_info_manager.get_all_providers_info()
+ else:
+  logger.info("Provider data is not expired. Skipping cache refresh.")
+
+ def _is_cache_expired(self) -> bool:
+ """Checks if the model/provider cache has expired."""
+ return self.model_info_manager._is_cache_expired()
+
+ # --- Placeholder for example usage ---
+ # if __name__ == '__main__':
+ # async def main():
+ # try:
+ # # Example initialization and usage
+ # client = G4FClient(log_level=logging.DEBUG)
+ #
+ # # Get provider info
+ # providers = client.get_available_providers()
+ # print(f"Found {len(providers)} providers.")
+ # # print(json.dumps(client.get_provider_info("OpenAI"), indent=2))
+ #
+ # # Get model info
+ # models = client.get_available_models()
+ # print(f"Found {len(models)} models.")
+ # # print(json.dumps(client.get_model_info("gemini-2.5-flash"), indent=2))
+ #
+ # # Create a chat session
+ # # Explicitly choose a model known to be a chat model if default isn't
+ # chat_session = client.new_chat(model="gemini-2.5-flash")
+ #
+ # # Generate a chat response
+ # response = await chat_session.generate(msg="Hello! Explain the concept of time travel in simple terms.")
+ # print(f"\nAI Response:\n{response}")
+ #
+ # # Example Image Generation (requires a suitable model and provider)
+ # # try:
+ # # image_url = client.generate_image(prompt="A futuristic cityscape at sunset, digital art")
+ # # print(f"\nGenerated Image URL: {image_url}")
+ # # except Exception as e:
+ # # print(f"Image generation failed: {e}")
+ #
+ # # Example Audio Transcription (requires an audio file named 'test.mp3' in the same directory)
+ # # if os.path.exists("test.mp3"):
+ # # try:
+ # #  transcription = client.transcribe_audio("test.mp3", language="en")
+ # #  print(f"\nAudio Transcription: {transcription}")
+ # # except Exception as e:
+ # #  print(f"Au
+
+dio transcription failed: {e}")
+ # # else:
+ # # print("\nSkipping audio transcription: 'test.mp3' not found.")
+ #
+ # except (ModelNotFoundError, ProviderError, G4FSDKError, ConfigError) as e:
+ # print(f"\nAn SDK error occurred: {e}")
+ # except Exception as e:
+ # print(f"\nAn unexpected error occurred: {e}")
+ #
+ # finally:
+ # # Ensure logging is flushed if needed (e.g., writing to file)
+ # logging.shutdown()
+ #
+ # # To run the example:
+ # # if __name__ == "__main__":
+ # # asyncio.run(main())
+
+
+
+Мы начали с фундаментальных компонентов. Теперь перейдем к API-оберткам, которые будут использовать эти компоненты для выполнения конкретных задач.
+
+7. g4f_sdk/chat.py
+
+# g4f_sdk/chat.py
+
+"""
+Chat API wrapper for the G4F SDK.
+Handles chat completions, manages conversation history, and integrates with providers.
+"""
+
+import logging
+import asyncio
+import json
+from typing import Optional, Union, List, Dict, Any, Type, AsyncIterator
+
+# Import necessary components from g4f
+try:
+ import g4f
+ from g4f.models import Model, ModelType
+ from g4f.Provider import BaseProvider
+except ImportError:
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .models import ModelInfoManager
+from .providers import ProviderManager
+from .utils import logger, run_with_retries, clean_response_with_ai, _clean_response_programmatic
+from .exceptions import ProviderError, ModelNotFoundError, G4FSDKError, RateLimitError, InvalidResponseError, ConfigError
+
+class ChatAPI:
+ """
+ Handles chat completions using various g4f providers.
+ Manages conversation history, automatic provider selection, error handling,
+ and response cleaning.
+ """
+ def __init__(
+ self,
+ config: Config,
+ provider_manager: ProviderManager,
+ model_info_manager: ModelInfoManager,
+ model: Optional[Union[str, Model]] = None,
+ initial_context: Optional[List[Dict[str, Any]]] = None,
+ explicit_p
+
+rovider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs # Pass through args like temperature, max_tokens, etc.
+ ):
+ """
+ Initializes the ChatAPI.
+
+ Args:
+ config: The SDK's configuration object.
+ provider_manager: The ProviderManager instance.
+ model_info_manager: The ModelInfoManager instance.
+ model: The model name (str) or g4f.models.Model object to use. Defaults to client's default.
+ initial_context: Optional list of messages to start the conversation.
+ explicit_provider: Force a specific provider (name string or class) for this chat.
+ **kwargs: Additional arguments passed to the underlying provider call (e.g., temperature, timeout).
+ """
+ self.config = config
+ self.provider_manager = provider_manager
+ self.model_info_manager = model_info_manager
+ self.extra_kwargs = kwargs # Store extra arguments for provider calls
+
+ # --- Model Selection ---
+ self.model_name = None
+ if isinstance(model, Model):
+  self.model_name = model.name
+ elif isinstance(model, str):
+  self.model_name = model
+ else:
+  # Fallback to default model if none provided or invalid type
+  default_model_info = self.model_info_manager.get_model(self.config.get("default_model"))
+  if default_model_info:
+  self.model_name = default_model_info['name']
+  else:
+  raise ConfigError("No model specified and default model could not be determined.")
+
+ model_info = self.model_info_manager.get_model(self.model_name)
+ if not model_info:
+  raise ModelNotFoundError(self.model_name)
+ if not model_info.get('is_chat_model', False):
+  logger.warning(f"Model '{self.model_name}' might not be a chat model (is_chat_model: {model_info.get('is_chat_model')}). Proceeding anyway.")
+
+ # --- Provider Selection ---
+ self.explicit_provider_name = None
+ if isinstance(explicit_provider, str):
+  self.explicit_provider_name = explicit_provider
+ elif inspect.isclass(explicit_provider) and issubclass(explicit_provider, BaseProvider):
+  self.explicit_provider_name = explicit_provider.__name__
+
+ #
+
+Resolve preferred providers from config or explicit setting
+ preferred_providers = self.extra_kwargs.pop('preferred_providers', None)
+ if self.explicit_provider_name:
+  # If an explicit provider is given, use it directly
+  self.selected_provider_class = self.provider_manager.model_info_manager.get_provider_instance_class(self.explicit_provider_name)
+  if not self.selected_provider_class:
+  raise ProviderError(f"Explicitly specified provider '{self.explicit_provider_name}' not found or invalid.")
+  logger.info(f"Chat will use explicitly set provider: {self.explicit_provider_name}")
+ else:
+  # Use preferred providers from kwargs or config
+  final_preferred = preferred_providers if preferred_providers is not None else self.config.get("preferred_providers", [])
+  self.selected_provider_class = self.provider_manager.get_best_provider_for_model(
+  self.model_name,
+  task_type="chat", # Specify task type
+  preferred_providers=final_preferred
+  )
+  if not self.selected_provider_class:
+  raise ProviderError(f"Could not find a suitable provider for model '{self.model_name}' and task 'chat'.")
+  logger.info(f"Chat will use automatically selected provider: {self.selected_provider_class.__name__}")
+
+ # --- Conversation History ---
+ # Initialize history, respecting initial context and the 25-message limit (if applicable from g4f)
+ # Note: The 25-message limit was clarified as a misunderstanding of dialogue context, not g4f limits.
+ # We will manage history based on token limits or user settings, not a hard 25-message cap.
+ self.history: List[Dict[str, Any]] = []
+ if initial_context:
+  # Basic validation of initial context
+  for msg in initial_context:
+  if isinstance(msg, dict) and "role" in msg and "content" in msg:
+   self.history.append(msg)
+  else:
+   logger.warning(f"Skipping invalid message in initial_context: {msg}")
+  # Trim history if it exceeds a reasonable starting point (e.g., based on token limits, not fixed 25)
+  self._trim_history() # A
+
+pply trimming based on token limits or config
+
+ # --- Other settings ---
+ self.timeout = self.extra_kwargs.pop('timeout', self.config.get('timeout', 60))
+ self.stream = self.extra_kwargs.pop('stream', False)
+ self.use_ai_cleaner = self.extra_kwargs.pop('use_ai_cleaner', self.config.get('use_ai_cleaner', True))
+ self.ai_cleaner_prompt = self.extra_kwargs.pop('ai_cleaner_prompt', self.config.get('ai_cleaner_prompt'))
+ self.provider_name = self.selected_provider_class.__name__ if self.selected_provider_class else None
+
+ def _trim_history(self, max_tokens_per_message: int = 1000):
+ """
+ Trims the conversation history to fit within token limits.
+ This is a simplified trimming logic. A more robust implementation would consider
+ token counts more accurately and provider-specific limits.
+ For now, it ensures history doesn't become excessively long.
+ The actual message count limit (like 25) is not enforced as a hard rule here,
+ but rather history is managed to stay within reasonable token bounds.
+ """
+ # Rough token estimation: Assume average message length ~ max_tokens_per_message
+ # A more accurate method would involve a tokenizer.
+ # For now, let's just keep a reasonable number of recent messages if history gets too long.
+ # Example: Keep last 50 messages if history exceeds ~50 * 1000 tokens.
+ max_messages = 50 # Arbitrary limit to prevent excessive history growth
+ if len(self.history) > max_messages:
+  self.history = self.history[-max_messages:]
+  logger.debug(f"History trimmed to {max_messages} messages.")
+
+ def _add_message_to_history(self, role: str, content: str):
+ """Adds a message to the conversation history."""
+ self.history.append({"role": role, "content": content})
+ self._trim_history() # Trim history after adding a new message
+
+ def _get_provider_instance(self) -> Optional[BaseProvider]:
+ """Gets an instance of the selected provider."""
+ if not self.selected_provider_class:
+  logger.error("No provider class selected for this c
+
+hat instance.")
+  return None
+ return self.provider_manager.get_provider_instance(self.provider_name)
+
+ async def _call_provider(self, messages: List[Dict[str, Any]], **kwargs) -> Any:
+ """Internal method to call the selected provider with retry logic."""
+ provider_instance = self._get_provider_instance()
+ if not provider_instance:
+  raise ProviderError("Failed to get provider instance.")
+
+ # Prepare call arguments
+ call_args = {
+  "model": self.model_name,
+  "messages": messages,
+  "timeout": self.timeout,
+  "stream": self.stream,
+  # Include other common parameters that might be passed via extra_kwargs
+  **self.extra_kwargs,
+  **kwargs # User-provided kwargs for this specific call take precedence
+ }
+ # Remove potentially conflicting parameters already handled
+ call_args.pop('provider', None)
+ call_args.pop('model', None)
+ call_args.pop('messages', None)
+ call_args.pop('timeout', None)
+ call_args.pop('stream', None)
+
+ # Determine which method to call based on provider capabilities and task type
+ # Prefer chat completion API if available and intended for this provider/model
+ if hasattr(provider_instance, 'create_chat_completion') and provider_instance.use_chat_completion_api:
+  method_to_call = provider_instance.create_chat_completion
+ elif hasattr(provider_instance, 'chat_completion'): # Fallback to chat_completion if available
+  method_to_call = provider_instance.chat_completion
+ else:
+  raise ProviderError(f"Provider '{self.provider_name}' does not support chat completion via create_chat_completion or chat_completion.")
+
+ # Execute the provider call with retries
+ try:
+  return await run_with_retries(
+  method_to_call,
+  **call_args,
+  retries=self.config.get("retries", 3),
+  delay=self.config.get("retry_delay", 2.0),
+  error_types=(asyncio.TimeoutError, ConnectionError), # Add specific g4f exceptions if known
+  log_prefix=f"Chat completion ({self.provider_name})"
+  )
+ except (ProviderError, ModelNotFoundError, RateLimitError, Inval
+
+idResponseError, G4FSDKError) as e:
+  logger.error(f"Chat completion failed after retries: {e}")
+  raise e # Re-raise specific SDK errors
+ except Exception as e:
+  logger.error(f"Unexpected error during chat completion call: {e}")
+  # Wrap unexpected errors in a ProviderError for consistency
+  raise ProviderError(f"Unexpected error during chat completion: {e}", provider_name=self.provider_name, original_exception=e)
+
+ async def generate(self, msg: str, **kwargs) -> str:
+ """
+ Sends a message, gets a response, updates history, and returns the cleaned response.
+
+ Args:
+ msg: The user's message content.
+ **kwargs: Additional arguments to pass to the provider call (e.g., temperature, functions).
+
+ Returns:
+ The cleaned string response from the AI.
+ """
+ self._add_message_to_history("user", msg)
+
+ try:
+  response = await self._call_provider(messages=self.history, **kwargs)
+
+  cleaned_response_text = ""
+  if self.stream:
+  # If streaming, response is likely an async iterator. We need to process it.
+  # For simplicity in 'generate' (non-streaming), we'll collect the full response.
+  # A separate 'stream_generate' method would handle the iterator.
+  # For now, assume response is collected if stream=False was intended or provider returned full response.
+  if isinstance(response, AsyncIterator):
+   # Collect all chunks if streaming was requested but not handled properly here
+   full_response_content = ""
+   async for chunk in response:
+   full_response_content += chunk
+   response = full_response_content
+
+  # Perform cleaning on the collected response
+  if isinstance(response, str):
+   cleaned_response_text = await self._clean_and_update_history(response)
+  else:
+   # Handle cases where response might be structured (e.g., dict for function calls)
+   # For now, assume string response for generate method.
+   logger.warning(f"Received non-string response in generate(): {type(response)}. Attempting conversion.")
+   response_str = str(response)
+   c
+
+leaned_response_text = await self._clean_and_update_history(response_str)
+
+  elif isinstance(response, str):
+  # Direct string response
+  cleaned_response_text = await self._clean_and_update_history(response)
+  else:
+  # Handle structured responses (e.g., from function calls or different provider formats)
+  # This might need more specific parsing depending on provider output.
+  logger.warning(f"Received unexpected response type from provider: {type(response)}. Attempting to convert to string.")
+  response_str = str(response) # Basic conversion
+  cleaned_response_text = await self._clean_and_update_history(response_str)
+
+  return cleaned_response_text
+
+ except (ProviderError, ModelNotFoundError, RateLimitError, InvalidResponseError, G4FSDKError, ConfigError) as e:
+  logger.error(f"Failed to generate chat response: {e}")
+  # Optionally, try to remove the last user message if the generation failed before getting a response
+  if self.history and self.history[-1]['role'] == 'user':
+  self.history.pop()
+  raise e
+ except Exception as e:
+  logger.error(f"An unexpected error occurred during generate(): {e}")
+  raise G4FSDKError(f"An unexpected error occurred during generate(): {e}") from e
+
+ async def stream_generate(self, msg: str, **kwargs) -> AsyncIterator[str]:
+ """
+ Sends a message, gets a streaming response, updates history chunk by chunk,
+ and yields cleaned response chunks.
+
+ Args:
+ msg: The user's message content.
+ **kwargs: Additional arguments to pass to the provider call (e.g., temperature, functions).
+
+ Yields:
+ Cleaned string chunks of the AI's response.
+ """
+ self._add_message_to_history("user", msg)
+
+ collected_chunks = [] # To store full response for final cleaning and history update
+ current_chunk = "" # To accumulate chunks for potential cleaning
+
+ try:
+  response_iterator = await self._call_provider(messages=self.history, stream=True, **kwargs)
+
+  async for chunk in response_iterator:
+  if isinstance(chunk, str):
+   curren
+
+t_chunk += chunk
+   # Yield the chunk (potentially cleaned, but for streaming, cleaning might be delayed or simplified)
+   # Simple yielding first, more complex cleaning might happen at the end.
+   yield chunk # Yield raw chunk for immediate display
+  else:
+   # Handle potential structured chunks if provider returns them
+   logger.warning(f"Received non-string chunk in stream_generate(): {type(chunk)}. Attempting conversion.")
+   chunk_str = str(chunk)
+   current_chunk += chunk_str
+   yield chunk_str
+
+  collected_chunks.append(chunk) # Store for final processing
+
+  # After streaming is complete, process the full response for cleaning and history update
+  full_response_content = "".join(collected_chunks)
+  cleaned_response_text = await self._clean_and_update_history(full_response_content)
+
+  # If the final cleaned response differs significantly from the raw streamed content,
+  # we might need a way to yield the final cleaned version or indicate the difference.
+  # For now, we assume cleaning is applied post-stream.
+
+ except (ProviderError, ModelNotFoundError, RateLimitError, InvalidResponseError, G4FSDKError, ConfigError) as e:
+  logger.error(f"Failed to stream chat response: {e}")
+  if self.history and self.history[-1]['role'] == 'user':
+  self.history.pop() # Remove last user message if generation failed
+  raise e
+ except Exception as e:
+  logger.error(f"An unexpected error occurred during stream_generate(): {e}")
+  raise G4FSDKError(f"An unexpected error occurred during stream_generate(): {e}") from e
+
+ def _clean_and_update_history(self, response_text: str) -> str:
+ """Helper to clean response and update history."""
+ cleaned_text = response_text
+ if self.use_ai_cleaner and self.ai_cleaner_prompt:
+  try:
+  has_ad, cleaned_text = await clean_response_with_ai(
+   text=response_text,
+   system_prompt=self.ai_cleaner_prompt,
+   provider_name=self.provider_name,
+   timeout=self.config.get("ai_cleaner_timeout", 15), # Specific timeout for
+
+ cleaner
+   g4f_client_instance=None, # Pass a client instance if needed for cleaner's calls
+   cleaning_model=self.config.get("ai_cleaner_model", "gpt-3.5-turbo"),
+   preferred_ai_providers=self.config.get("preferred_ai_providers")
+  )
+  if has_ad:
+   logger.debug("AI cleaner successfully removed an ad.")
+  except Exception as e:
+  logger.warning(f"AI cleaner failed: {e}. Falling back to programmatic cleaning.")
+  cleaned_text = _clean_response_programmatic(response_text, self.provider_name)
+ else:
+  # Use programmatic cleaning if AI cleaner is disabled or unavailable
+  cleaned_text = _clean_response_programmatic(response_text, self.provider_name)
+
+ # Add the cleaned AI response to history
+ self._add_message_to_history("assistant", cleaned_text)
+ return cleaned_text
+
+ def get_history(self) -> List[Dict[str, Any]]:
+ """Returns the current conversation history."""
+ return self.history
+
+ def clear_history(self):
+ """Clears the conversation history."""
+ self.history = []
+ logger.info("Chat history cleared.")
+
+ # --- Direct access to underlying g4f chat client ---
+ def get_raw_g4f_chat_client(self) -> Optional[g4f.AsyncClient]:
+ """
+ Returns an instance of the original g4f AsyncClient, potentially configured.
+ Useful for advanced usage or accessing features not directly exposed by ChatAPI.
+ """
+ # Note: This client might need separate configuration (API keys, proxy) if not inherited.
+ # We can try to instantiate it with SDK's config.
+ try:
+  # This assumes g4f.AsyncClient can be initialized with these args. Check g4f source.
+  raw_client = g4f.AsyncClient(
+  api_key=self.config.get("api_key"),
+  proxy=self.config.get("proxy")
+  )
+  logger.debug("Providing configured raw g4f AsyncClient instance.")
+  return raw_client
+ except Exception as e:
+  logger.error(f"Failed to get configured raw g4f AsyncClient: {e}")
+  return None
+
+
+
+
+Теперь у нас есть базовые API-обертки. Продолжим с images.py и audio.py.
+
+8.
+
+g4f_sdk/images.py
+
+# g4f_sdk/images.py
+
+"""
+Image generation API wrapper for the G4F SDK.
+Handles image generation requests using various g4f providers.
+"""
+
+import logging
+import asyncio
+from typing import Optional, Union, List, Dict, Any, Type
+
+# Import necessary components from g4f
+try:
+ import g4f
+ from g4f.models import Model, ModelType
+ from g4f.Provider import BaseProvider
+except ImportError:
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .models import ModelInfoManager
+from .providers import ProviderManager
+from .utils import logger, run_with_retries
+from .exceptions import ProviderError, ModelNotFoundError, G4FSDKError, ConfigError, InvalidResponseError
+
+class ImageAPI:
+ """
+ Handles image generation requests using various g4f providers.
+ Manages model selection, provider selection, error handling, and parameter mapping.
+ """
+ def __init__(
+ self,
+ config: Config,
+ provider_manager: ProviderManager,
+ model_info_manager: ModelInfoManager,
+ model: Optional[Union[str, Model]] = None,
+ explicit_provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs # Pass through args like size, quality, style, n, response_format
+ ):
+ """
+ Initializes the ImageAPI.
+
+ Args:
+ config: The SDK's configuration object.
+ provider_manager: The ProviderManager instance.
+ model_info_manager: The ModelInfoManager instance.
+ model: The image generation model name (str) or g4f.models.Model object. Defaults to client's default image model.
+ explicit_provider: Force a specific provider (name string or class).
+ **kwargs: Additional arguments for image generation (size, quality, style, n, response_format).
+ """
+ self.config = config
+ self.provider_manager = provider_manager
+ self.model_info_manager = model_info_manager
+ self.extra_kwargs = kwargs # Store extra arguments for provider calls
+
+ # --- Model Selection ---
+ self.model_name = None
+ if isi
+
+nstance(model, Model):
+  self.model_name = model.name
+ elif isinstance(model, str):
+  self.model_name = model
+ else:
+  # Try to find a default image generation model
+  image_models = self.model_info_manager.get_models_by_type(ModelType.image_generation)
+  if image_models:
+  self.model_name = image_models[0] # Pick the first available image model
+  logger.debug(f"Using default image generation model: {self.model_name}")
+  else:
+  # Fallback to client's default model if no specific image model is found
+  default_model_info = self.model_info_manager.get_model(self.config.get("default_model"))
+  if default_model_info:
+   self.model_name = default_model_info['name']
+   logger.warning(f"No specific image generation model found. Falling back to default model '{self.model_name}'.")
+  else:
+   raise ConfigError("No image model specified and default model could not be determined.")
+
+ model_info = self.model_info_manager.get_model(self.model_name)
+ if not model_info:
+  raise ModelNotFoundError(self.model_name)
+ if not model_info.get('is_image_generation_model', False):
+  logger.warning(f"Model '{self.model_name}' might not be an image generation model (is_image_generation_model: {model_info.get('is_image_generation_model')}). Proceeding anyway.")
+
+ # --- Provider Selection ---
+ self.explicit_provider_name = None
+ if isinstance(explicit_provider, str):
+  self.explicit_provider_name = explicit_provider
+ elif inspect.isclass(explicit_provider) and issubclass(explicit_provider, BaseProvider):
+  self.explicit_provider_name = explicit_provider.__name__
+
+ # Resolve preferred providers from config or explicit setting
+ preferred_providers = self.extra_kwargs.pop('preferred_providers', None)
+ if self.explicit_provider_name:
+  self.selected_provider_class = self.provider_manager.model_info_manager.get_provider_instance_class(self.explicit_provider_name)
+  if not self.selected_provider_class:
+  raise ProviderError(f"Explicitly specified provider '{self.explici
+
+t_provider_name}' not found or invalid.")
+  logger.info(f"Image generation will use explicitly set provider: {self.explicit_provider_name}")
+ else:
+  final_preferred = preferred_providers if preferred_providers is not None else self.config.get("preferred_providers", [])
+  self.selected_provider_class = self.provider_manager.get_best_provider_for_model(
+  self.model_name,
+  task_type="image", # Specify task type
+  preferred_providers=final_preferred
+  )
+  if not self.selected_provider_class:
+  raise ProviderError(f"Could not find a suitable provider for model '{self.model_name}' and task 'image'.")
+  logger.info(f"Image generation will use automatically selected provider: {self.selected_provider_class.__name__}")
+
+ self.provider_name = self.selected_provider_class.__name__ if self.selected_provider_class else None
+ self.timeout = self.extra_kwargs.pop('timeout', self.config.get('timeout', 60))
+
+ def _get_provider_instance(self) -> Optional[BaseProvider]:
+ """Gets an instance of the selected provider."""
+ if not self.selected_provider_class:
+  logger.error("No provider class selected for this image generation instance.")
+  return None
+ return self.provider_manager.get_provider_instance(self.provider_name)
+
+ async def generate(
+ self,
+ prompt: str,
+ size: Optional[str] = None,
+ quality: Optional[str] = None,
+ style: Optional[str] = None,
+ n: Optional[int] = None,
+ response_format: Optional[str] = None,
+ **kwargs
+ ) -> Union[str, List[str], Dict[str, Any]]:
+ """
+ Generates an image based on a text prompt.
+
+ Args:
+ prompt: The text description of the image to generate.
+ size: The size of the generated images ("256x256", "512x512", "1024x1024").
+ quality: The quality of the generated images ("standard" or "hd").
+ style: The style of the generated images ("vivid" or "natural").
+ n: The number of images to generate.
+ response_format: The format in which the generated images are returned ("url" or "b64_json").
+ **kwargs: Additional keyword
+
+arguments for the image generation call, passed directly to the provider.
+
+ Returns:
+ A URL string, a list of URL strings, or a dictionary with base64 data,
+ depending on the response_format and n.
+ """
+ provider_instance = self._get_provider_instance()
+ if not provider_instance:
+  raise ProviderError("Failed to get provider instance for image generation.")
+
+ # Map parameters from our API to potential provider-specific arguments
+ call_args = {
+  "prompt": prompt,
+  "model": self.model_name, # Use the selected model
+  "size": size if size is not None else self.extra_kwargs.get('size', self.config.get('image_size', "1024x1024")),
+  "quality": quality if quality is not None else self.extra_kwargs.get('quality', self.config.get('image_quality', "standard")),
+  "style": style if style is not None else self.extra_kwargs.get('style', self.config.get('image_style', "vivid")),
+  "n": n if n is not None else self.extra_kwargs.get('n', self.config.get('image_n', 1)),
+  "response_format": response_format if response_format is not None else self.extra_kwargs.get('response_format', self.config.get('image_response_format', "url")),
+  "timeout": self.timeout,
+  **kwargs # User-provided kwargs take precedence
+ }
+ # Remove None values to avoid issues with providers expecting specific parameters
+ call_args = {k: v for k, v in call_args.items() if v is not None}
+
+ # Determine which method to call
+ if not hasattr(provider_instance, 'create_image') and not hasattr(provider_instance, 'generate'):
+  raise ProviderError(f"Provider '{self.provider_name}' does not support image generation via create_image or generate.")
+
+ method_to_call = getattr(provider_instance, 'create_image', getattr(provider_instance, 'generate'))
+
+ try:
+  result = await run_with_retries(
+  method_to_call,
+  **call_args,
+  retries=self.config.get("retries", 3),
+  delay=self.config.get("retry_delay", 2.0),
+  error_types=(asyncio.TimeoutError, ConnectionError),
+  log_prefix=f"Image generation
+
+({self.provider_name})"
+  )
+
+  # Basic response validation
+  if not result:
+  raise InvalidResponseError("Received empty response from image generation provider.", provider_name=self.provider_name)
+
+  logger.info(f"Image generation successful. Result type: {type(result)}")
+  return result
+
+ except (ProviderError, ModelNotFoundError, RateLimitError, InvalidResponseError, G4FSDKError, ConfigError) as e:
+  logger.error(f"Image generation failed: {e}")
+  raise e
+ except Exception as e:
+  logger.error(f"An unexpected error occurred during image generation: {e}")
+  raise G4FSDKError(f"An unexpected error occurred during image generation: {e}") from e
+
+
+9. g4f_sdk/audio.py
+
+# g4f_sdk/audio.py
+
+"""
+Audio API wrapper for the G4F SDK.
+Handles speech-to-text (transcription) and text-to-speech (synthesis) requests.
+"""
+
+import logging
+import asyncio
+import os
+from typing import Optional, Union, List, Dict, Any, Type
+
+# Import necessary components from g4f
+try:
+ import g4f
+ from g4f.models import Model, ModelType
+ from g4f.Provider import BaseProvider
+except ImportError:
+ raise ImportError("The 'g4f' library is not installed. Please install it using 'pip install g4f'.")
+
+from .config import Config
+from .models import ModelInfoManager
+from .providers import ProviderManager
+from .utils import logger, run_with_retries
+from .exceptions import ProviderError, ModelNotFoundError, G4FSDKError, ConfigError, InvalidResponseError
+
+class AudioAPI:
+ """
+ Handles audio processing tasks (transcription and synthesis) using g4f providers.
+ Manages model selection, provider selection, parameter mapping, and error handling.
+ """
+ def __init__(
+ self,
+ config: Config,
+ provider_manager: ProviderManager,
+ model_info_manager: ModelInfoManager,
+ # Default models can be set here or resolved dynamically
+ default_stt_model: Optional[Union[str, Model]] = None,
+ default_tts_model: Optional[Union[str, Model]] = None,
+ explicit_stt
+
+_provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ explicit_tts_provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs # Pass through args like language, voice, response_format
+ ):
+ """
+ Initializes the AudioAPI.
+
+ Args:
+ config: The SDK's configuration object.
+ provider_manager: The ProviderManager instance.
+ model_info_manager: The ModelInfoManager instance.
+ default_stt_model: Default Speech-to-Text model name or object.
+ default_tts_model: Default Text-to-Speech model name or object.
+ explicit_stt_provider: Force a specific provider for STT.
+ explicit_tts_provider: Force a specific provider for TTS.
+ **kwargs: Additional arguments for audio processing.
+ """
+ self.config = config
+ self.provider_manager = provider_manager
+ self.model_info_manager = model_info_manager
+ self.extra_kwargs = kwargs
+
+ # --- Resolve default STT model ---
+ self.stt_model_name = self._resolve_model_name(default_stt_model, ModelType.speech_to_text, "default_stt_model")
+ # --- Resolve default TTS model ---
+ self.tts_model_name = self._resolve_model_name(default_tts_model, ModelType.text_to_speech, "default_tts_model")
+
+ # --- Provider Selection for STT ---
+ self.stt_provider_name = None
+ self.stt_provider_class = self._resolve_provider_class(explicit_stt_provider, "STT")
+ if self.stt_provider_class:
+  self.stt_provider_name = self.stt_provider_class.__name__
+
+ # --- Provider Selection for TTS ---
+ self.tts_provider_name = None
+ self.tts_provider_class = self._resolve_provider_class(explicit_tts_provider, "TTS")
+ if self.tts_provider_class:
+  self.tts_provider_name = self.tts_provider_class.__name__
+
+ self.timeout = self.config.get('audio_timeout', self.config.get('timeout', 60))
+
+ def _resolve_model_name(self, model_input: Optional[Union[str, Model]], model_type: ModelType, config_key: str) -> str:
+ """Helper to resolve model name from input, config, or find default by type."""
+ if isinstance(model_input, Model):
+  return model_input.n
+
+ame
+ elif isinstance(model_input, str):
+  return model_input
+
+ # Try from explicit input first
+ model_name = model_input
+ if model_name:
+  model_info = self.model_info_manager.get_model(model_name)
+  if not model_info:
+  logger.warning(f"Provided model '{model_name}' not found. Attempting to find default.")
+  elif model_info.get('model_type') != model_type.value:
+  logger.warning(f"Provided model '{model_name}' might not be of type {model_type.value}.")
+
+ # Try from config key
+ if not model_name:
+  model_name = self.config.get(config_key)
+
+ # Try to find a default model of the specified type
+ if not model_name:
+  default_models = self.model_info_manager.get_models_by_type(model_type)
+  if default_models:
+  model_name = default_models[0] # Pick the first available
+  logger.debug(f"Using default model of type {model_type.value}: '{model_name}'")
+  else:
+  # Fallback to client's general default model if no specific type found
+  default_general_model = self.model_info_manager.get_model(self.config.get("default_model"))
+  if default_general_model:
+   model_name = default_general_model['name']
+   logger.warning(f"No specific model of type {model_type.value} found. Falling back to default model '{model_name}'.")
+  else:
+   raise ConfigError(f"No suitable model found for type {model_type.value} and no general default model available.")
+
+ # Final check if the resolved model name exists
+ if not self.model_info_manager.get_model(model_name):
+  raise ModelNotFoundError(model_name)
+ return model_name
+
+ def _resolve_provider_class(self, provider_input: Optional[Union[str, Type[BaseProvider]]], task_type_str: str) -> Optional[Type[BaseProvider]]:
+ """Helper to resolve provider class from input, config, or auto-selection."""
+ provider_class = None
+ provider_name = None
+
+ if isinstance(provider_input, str):
+  provider_name = provider_input
+ elif inspect.isclass(provider_input) and issubclass(provider_input, BaseProvider):
+  provider_name = provider_in
+
+put.__name__
+
+ if provider_name:
+  provider_class = self.provider_manager.model_info_manager.get_provider_instance_class(provider_name)
+  if not provider_class:
+  logger.warning(f"Explicitly specified {task_type_str} provider '{provider_name}' not found or invalid.")
+  else:
+  logger.info(f"{task_type_str} will use explicitly set provider: {provider_name}")
+  return provider_class
+
+ # Auto-selection if no explicit provider is given
+ # We need a model name and task type to select a provider
+ model_name_for_selection = self.stt_model_name if task_type_str == "STT" else self.tts_model_name
+ task_type_for_selection = "audio_s2t" if task_type_str == "STT" else "audio_t2s"
+
+ if model_name_for_selection:
+  preferred = self.extra_kwargs.get(f'preferred_{task_type_str.lower()}_providers', self.config.get(f"preferred_{task_type_str.lower()}_providers"))
+  provider_class = self.provider_manager.get_best_provider_for_model(
+  model_name_for_selection,
+  task_type=task_type_for_selection,
+  preferred_providers=preferred
+  )
+  if provider_class:
+  logger.info(f"{task_type_str} will use automatically selected provider: {provider_class.__name__}")
+  return provider_class
+  else:
+  logger.warning(f"Could not automatically select a {task_type_str} provider for model '{model_name_for_selection}'.")
+ else:
+  logger.warning(f"Cannot select {task_type_str} provider: model name is not resolved.")
+
+ return None
+
+ def _get_provider_instance(self, provider_class: Optional[Type[BaseProvider]], provider_name_hint: str) -> Optional[BaseProvider]:
+ """Gets an instance of the specified provider class."""
+ if not provider_class:
+  logger.error(f"No provider class available for {provider_name_hint}.")
+  return None
+ return self.provider_manager.get_provider_instance(provider_class.__name__)
+
+ async def transcribe(
+ self,
+ file_path: str,
+ model: Optional[Union[str, Model]] = None,
+ language: Optional[str] = None,
+ response_format: Optional[str] = None,
+ provider: Opt
+
+ional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs
+ ) -> Union[str, Dict[str, Any]]:
+ """
+ Transcribes an audio file to text.
+
+ Args:
+ file_path: Path to the audio file.
+ model: The speech-to-text model to use (name string or g4f.models.Model object).
+   Defaults to the client's default STT model or auto-selection.
+ language: The language of the audio (ISO-639-1 code, e.g., "en", "ru").
+ response_format: The format of the transcription output ('json', 'text', 'srt', 'verbose_json', 'vtt').
+ provider: Explicitly specify a provider (name string or class) for STT.
+ **kwargs: Additional keyword arguments for the transcription call.
+
+ Returns:
+ The transcription result, format depends on response_format.
+ """
+ if not os.path.exists(file_path):
+  raise FileNotFoundError(f"Audio file not found at: {file_path}")
+
+ target_model_name = self._resolve_model_name(model, ModelType.speech_to_text, "stt_model")
+ provider_class = self._resolve_provider_class(provider, "STT")
+ provider_instance = self._get_provider_instance(provider_class, "STT")
+
+ if not provider_instance:
+  raise ProviderError("Failed to get STT provider instance.")
+
+ call_args = {
+  "file": file_path, # Assuming provider expects 'file' or 'file_path'
+  "model": target_model_name,
+  "language": language if language is not None else self.extra_kwargs.get('language', self.config.get('audio_language')),
+  "response_format": response_format if response_format is not None else self.extra_kwargs.get('response_format', self.config.get('audio_response_format', 'json')),
+  "timeout": self.timeout,
+  **kwargs
+ }
+ call_args = {k: v for k, v in call_args.items() if v is not None}
+
+ if not hasattr(provider_instance, 'speech_to_text'):
+  raise ProviderError(f"Provider '{self.provider_name}' does not support speech_to_text.")
+
+ try:
+  result = await run_with_retries(
+  provider_instance.speech_to_text,
+  **call_args,
+  retries=self.config.get("retries", 3),
+  delay=self.config.get("retry_delay
+
+", 2.0),
+  error_types=(asyncio.TimeoutError, ConnectionError, FileNotFoundError), # Add FileNotFoundError if relevant
+  log_prefix=f"STT ({self.provider_name})"
+  )
+  if not result:
+  raise InvalidResponseError("Received empty response from STT provider.", provider_name=self.provider_name)
+  logger.info("Audio transcription successful.")
+  return result
+ except (ProviderError, ModelNotFoundError, RateLimitError, InvalidResponseError, G4FSDKError, ConfigError) as e:
+  logger.error(f"STT failed: {e}")
+  raise e
+ except Exception as e:
+  logger.error(f"An unexpected error occurred during transcription: {e}")
+  raise G4FSDKError(f"An unexpected error occurred during transcription: {e}") from e
+
+ async def synthesize(
+ self,
+ text: str,
+ model: Optional[Union[str, Model]] = None,
+ voice: Optional[str] = None,
+ response_format: Optional[str] = None,
+ provider: Optional[Union[str, Type[BaseProvider]]] = None,
+ **kwargs
+ ) -> Union[bytes, str]:
+ """
+ Synthesizes speech from text.
+
+ Args:
+ text: The text to synthesize into speech.
+ model: The text-to-speech model to use (name string or g4f.models.Model object).
+   Defaults to the client's default TTS model or auto-selection.
+ voice: The voice to use for synthesis (e.g., "alloy", "echo"). Voice options depend on the provider/model.
+ response_format: The audio format ('mp3', 'opus', 'aac', 'flac', 'wav', 'pcm').
+ provider: Explicitly specify a provider (name string or class) for TTS.
+ **kwargs: Additional keyword arguments for the speech synthesis call.
+
+ Returns:
+ The audio data as bytes or potentially a file path/URL depending on provider implementation.
+ """
+ target_model_name = self._resolve_model_name(model, ModelType.text_to_speech, "tts_model")
+ provider_class = self._resolve_provider_class(provider, "TTS")
+ provider_instance = self._get_provider_instance(provider_class, "TTS")
+
+ if not provider_instance:
+  raise ProviderError("Failed to get TTS provider instance.")
+
+ call_args = {
+  "te
+
+xt": text,
+  "model": target_model_name,
+  "voice": voice if voice is not None else self.extra_kwargs.get('voice', self.config.get('audio_voice', 'alloy')), # Example default voice
+  "response_format": response_format if response_format is not None else self.extra_kwargs.get('response_format', self.config.get('audio_response_format', 'mp3')),
+  "timeout": self.timeout,
+  **kwargs
+ }
+ call_args = {k: v for k, v in call_args.items() if v is not None}
+
+ if not hasattr(provider_instance, 'text_to_speech'):
+  raise ProviderError(f"Provider '{self.provider_name}' does not support text_to_speech.")
+
+ try:
+  result = await run_with_retries(
+  provider_instance.text_to_speech,
+  **call_args,
+  retries=self.config.get("retries", 3),
+  delay=self.config.get("retry_delay", 2.0),
+  error_types=(asyncio.TimeoutError, ConnectionError),
+  log_prefix=f"TTS ({self.provider_name})"
+  )
+  if not result:
+  raise InvalidResponseError("Received empty response from TTS provider.", provider_name=self.provider_name)
+  logger.info("Speech synthesis successful.")
+  return result
+ except (ProviderError, ModelNotFoundError, RateLimitError, InvalidResponseError, G4FSDKError, ConfigError) as e:
+  logger.error(f"TTS failed: {e}")
+  raise e
+ except Exception as e:
+  logger.error(f"An unexpected error occurred during synthesis: {e}")
+  raise G4FSDKError(f"An unexpected error occurred during synthesis: {e}") from e
+
+
+
+
+Мы создали базовые API-обертки. Теперь займемся главным файлом пакета (__init__.py) и вспомогательными файлами проекта (pyproject.toml, .gitignore, README.md).
+
+10. g4f_sdk/__init__.py
+
+# g4f_sdk/__init__.py
+
+"""
+G4F SDK: A Python SDK for accessing various Large Language Models
+through the g4f library, with enhanced resilience, configuration,
+and features like AI-powered response cleaning and comprehensive provider/model management.
+
+Installation:
+pip install
+
+ g4f-sdk
+
+Usage:
+from g4f_sdk import G4FClient
+
+client = G4FClient()
+response = await client.chat.generate("Hello!")
+print(response)
+"""
+
+import logging
+import os # For path defaults if needed
+
+# Import core components
+from .client import G4FClient
+from .config import Config
+from .models import ModelInfoManager
+from .providers import ProviderManager
+from .chat import ChatAPI
+from .images import ImageAPI
+from .audio import AudioAPI
+from .utils import setup_logging # Allow external setup if needed
+from .exceptions import (
+ G4FSDKError,
+ ProviderError,
+ ModelNotFoundError,
+ ConfigError,
+ RateLimitError,
+ InvalidResponseError,
+ FunctionCallError,
+ VisionError
+)
+
+# --- Package metadata ---
+__version__ = "0.1.0" # Initial version
+
+# --- Define what gets imported with `from g4f_sdk import *` ---
+__all__ = [
+ # Core client
+ "G4FClient",
+
+ # Configuration and Management
+ "Config",
+ "ModelInfoManager",
+ "ProviderManager",
+
+ # API Wrappers
+ "ChatAPI",
+ "ImageAPI",
+ "AudioAPI",
+
+ # Utilities
+ "setup_logging",
+
+ # Exceptions
+ "G4FSDKError",
+ "ProviderError",
+ "ModelNotFoundError",
+ "ConfigError",
+ "RateLimitError",
+ "InvalidResponseError",
+ "FunctionCallError",
+ "VisionError",
+
+ # Metadata
+ "__version__"
+]
+
+# --- Optional: Set default logging level if not configured externally ---
+# It's generally better to let the user configure logging explicitly.
+# However, if no handlers are present, we can set a basic one.
+if not logging.getLogger().hasHandlers():
+ try:
+ # Use the config's default log level if available, otherwise default to INFO
+ # This assumes config might be loaded early or defaults are known.
+ # A safer approach might be to just set INFO by default if no handlers exist.
+ setup_logging(level=logging.INFO)
+ logger = logging.getLogger(__name__)
+ logger.info("Default logging setup applied.")
+ except Exception as e:
+ print(f"Warning: Could not apply default logging setup: {e}")
+
+logger = logging.getLogger(__name__) # Ensure logger is available
+
+logger.debug(f"G4F SDK package '{__name__}' initialized. Version: {__version__}")
+
+
+
+
+Теперь у нас есть основная структура пакета. Следующие шаги — это файлы сборки и документации.
+
+11. pyproject.toml (для современных Python проектов)
+
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g4f-sdk"
+version = "0.1.0"
+authors = [
+ { name = "Your Name", email = "your.email@example.com" }, # Replace with actual author info
+ # Add collaborative authors if needed
+]
+description = "A Python SDK for accessing various Large Language Models through the g4f library, with enhanced resilience and configuration."
+readme = "README.md"
+requires-python = ">=3.8" # Specify your Python version requirement
+classifiers = [
+ "Programming Language :: Python :: 3",
+ "License :: OSI Approved :: MIT License", # Choose your license
+ "Operating System :: OS Independent",
+ "Intended Audience :: Developers",
+ "Topic :: Software Development :: Libraries :: Python Modules",
+ "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Dependencies - IMPORTANT: Ensure 'g4f' is listed here!
+dependencies = [
+ "g4f>=0.1.0", # Specify the g4f library as a dependency
+ # Add other runtime dependencies like 'requests', 'aiohttp', etc., if used directly
+ # "requests",
+ # "aiohttp",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/your_username/g4f-sdk" # Replace with your repo URL
+"Bug Tracker" = "https://github.com/your_username/g4f-sdk/issues"
+
+# Optional: Project specific configuration for tools like black, ruff, pytest
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "PL"] # Common linting rules
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+# If using pytest for testing
+# [tool.pytest.ini_options]
+# minversion = "6.0"
+# addopts = "-r
+
+a -q"
+# testpaths = [
+#   "tests",
+# ]
+
+
+12. .gitignore
+
+# .gitignore
+
+# Byte-compiled Python files
+*.pyc
+__pycache__/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+*.swp
+*~
+
+# Cache and temporary files
+.cache/
+*.log
+*.tmp
+*.bak
+
+# Specific files generated by the SDK or tools
+g4f_sdk_provider_cache.json
+g4f_sdk_config.json # If we want to ignore a default config file
+
+# Secrets (if any were accidentally checked in)
+*.env
+secrets.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+13. README.md
+
+# G4F SDK
+
+[![PyPI version](https://badge.fury.io/py/g4f-sdk.svg)](https://badge.fury.io/py/g4f-sdk) <!-- Replace with actual PyPI badge if published -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Choose your license -->
+
+A Python SDK for accessing various Large Language Models through the [g4f](https://github.com/ItsPi3141/g4f) library, with enhanced resilience, configuration, and features like AI-powered response cleaning and comprehensive provider/model management.
+
+## Features
+
+*  **Unified Interface:** Access chat, image generation, and audio processing through a single client.
+*  **Resilience:** Automatic provider selection and retry mechanisms for handling errors and rate limits.
+*  **Comprehensive Model/Provider Management:** Dynamically fetches and caches information about available models and providers from `g4f`.
+*  **Configurability:** Extensive options via configuration files or direct parameters for logging, timeouts, proxies, API keys, response cleaning, and more.
+*  **AI-Powered Response Cleaning:** Intelligently removes provider artifacts and ads from responses.
+* **Full Parameter Support:** Exposes all relevant parameters from `g4f` for maximum flexibility.
+
+* **Function Calling & Vision Support:** Integrates advanced AI capabilities.
+
+## Installation
+
+It's recommended to use a virtual environment:
+
+```bash
+python -m venv venv
+source venv/bin/activate # On Windows use `venv\Scripts\activate`
+
+Then, install the SDK and its core dependency g4f:
+
+pip install g4f-sdk
+# The g4f library will be installed as a dependency.
+# Ensure you have the latest version of g4f, or specify a version if needed.
+# pip install g4f>=0.1.0
+
+
+Quick Start
+import asyncio
+import logging
+from g4f_sdk import G4FClient
+
+async def main():
+ # Initialize the client (loads default config, searches for g4f_sdk_config.json)
+ # You can also pass config directly: G4FClient(config_input={'default_model': 'gpt-4o'})
+ client = G4FClient(log_level=logging.DEBUG)
+
+ # --- Chat Example ---
+ try:
+ chat_session = client.new_chat(model="gemini-2.5-flash") # Or use your preferred model
+
+ # Send a message and get a response
+ response = await chat_session.generate(msg="Explain the concept of quantum entanglement in simple terms.")
+ print(f"Chat Response:\n{response}")
+
+ # Continue the conversation
+ response2 = await chat_session.generate(msg="How does this relate to 'spooky action at a distance'?")
+ print(f"\nSecond Response:\n{response2}")
+
+ # Get conversation history
+ # print("\nConversation History:", chat_session.get_history())
+
+ except Exception as e:
+ print(f"An error occurred during chat: {e}")
+
+ # --- Image Generation Example ---
+ # try:
+ # image_url = client.generate_image(prompt="A serene landscape with a hidden path, fantasy art")
+ # print(f"\nGenerated Image URL: {image_url}")
+ # except Exception as e:
+ # print(f"Image generation failed: {e}")
+
+ # --- Audio Transcription Example ---
+ # Ensure you have an audio file named 'test.mp3' in the same directory
+ # if os.path.exists("test.mp3"):
+ # try:
+ # transcription = client.transcribe_audio("test.mp3", langua
+
+ge="en")
+ # print(f"\nAudio Transcription: {transcription}")
+ # except Exception as e:
+ # print(f"Audio transcription failed: {e}")
+ # else:
+ # print("\nSkipping audio transcription example: 'test.mp3' not found.")
+
+ if __name__ == "__main__":
+ asyncio.run(main())
+
+
+
+Configuration
+The SDK's behavior can be customized using a configuration object.
+
+1. Default Settings: If no configuration is provided, the SDK uses built-in defaults.
+
+2. Configuration File: Create a g4f_sdk_config.json (or .py) file in the project root or specify a path.
+
+3. Dictionary/Object: Pass a dictionary or an object with attributes directly during client initialization.
+
+4. Keyword Arguments: Use keyword arguments during G4FClient() initialization for the highest precedence.
+
+Example g4f_sdk_config.json:
+
+{
+ "log_level": "DEBUG",
+ "default_model": "gpt-4",
+ "timeout": 120,
+ "retries": 5,
+ "retry_delay": 3.0,
+ "use_ai_cleaner": true,
+ "provider_cache_ttl": 86400,
+ "proxy": {
+  "http": "http://user:pass@host:port",
+  "https": "http://user:pass@host:port"
+ },
+ "api_key": "YOUR_GLOBAL_API_KEY_IF_NEEDED",
+ "preferred_providers": ["OpenAI", "Google"]
+}
+
+Refer to g4f_sdk/config.py for all available configuration options.
+
+
+Advanced Usage
+
+Provider Management
+You can get detailed information about providers and models:
+
+client = G4FClient()
+
+providers = client.get_available_providers()
+print(f"Found {len(providers)} providers.")
+
+models = client.get_available_models()
+print(f"Found {len(models)} models.")
+
+# Get info for a specific provider or model
+provider_info = client.get_provider_info("OpenAI")
+model_info = client.get_model_info("gemini-2.5-flash")
+
+
+Explicit Provider/Model Selection
+You can force a specific provider or model for any API call:
+
+# For chat
+chat_session = client.new_chat(
+
+model="gpt-4", provider="OpenAI") # Use specific model and provider
+response = await chat_session.generate("...")
+
+# For images
+image_url = client.generate_image(model="dall-e-3", provider="OpenAI", prompt="...")
+
+
+Function Calling
+Pass functions and function_call arguments to chat_session.generate() or client.chat.generate():
+
+# Example function definition (ensure it matches the expected structure for g4f)
+functions = [
+  {
+    "name": "get_weather",
+    "description": "Get the current weather in a given location",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"},
+        "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+      },
+      "required": ["location"],
+    },
+  }
+]
+
+# Make the call, potentially asking the model to choose a function
+response = await chat_session.generate(
+ msg="What's the weather like in Boston?",
+ functions=functions,
+ function_call="auto" # Or specify {"name": "get_weather"}
+)
+
+# Process the response (check if it's a function call)
+# ...
+
+
+Contributing
+Contributions are welcome! Please refer to the CONTRIBUTING.md file (to be created) for details on how to contribute.
+
+
+License
+This project is licensed under the MIT License - see the LICENSE file for details.
+```
+
+
+
+Теперь у нас есть полный набор файлов для SDK, включая базовые компоненты, API-обертки и файлы проекта.
+
+Я готов предоставить код для этих файлов. Давайте начнем с exceptions.py, utils.py, config.py, models.py, providers.py, client.py, chat.py, images.py, audio.py, __init__.py, pyproject.toml, .gitignore и README.md.
+
+Пожалуйста, дайте знать, если вы
