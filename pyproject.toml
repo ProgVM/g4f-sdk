@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "g4f-sdk"
+version = "0.2.0"
+authors = [
+ { name="ProgVM", email="progvminc@gmail.com" },
+]
+description = "A Python SDK for the g4f library with enhanced resilience, configuration, and flexibility."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+ "Programming Language :: Python :: 3",
+ "License :: OSI Approved :: MIT License",
+ "Operating System :: OS Independent",
+]
+dependencies = [
+ "g4f",
+ "pydantic",
+]
+
+[project.optional-dependencies]
+# Optional dependency for accurate token counting, improving chat history management.
+tiktoken = ["tiktoken"]
+# A group to install all optional dependencies
+all = ["g4f-sdk[tiktoken]"]
+
+[project.urls]
+"Homepage" = "https://github.com/ProgVM/g4f-sdk"
+"Bug Tracker" = "https://github.com/ProgVM/g4f-sdk/issues"
